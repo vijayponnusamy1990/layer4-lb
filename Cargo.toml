@@ -6,14 +6,18 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.101"
 arc-swap = "1.8.1"
+bincode = "2.0.0-rc.3"
+bytes = "1.11.1"
 clap = { version = "4.5.58", features = ["derive"] }
 dashmap = "6.1.0"
 env_logger = "0.11.9"
+foca = { version = "1.0.0", features = ["bincode-codec", "serde"] }
 futures = "0.3.31"
 governor = "0.10.4"
 log = "0.4.29"
 nonzero_ext = "0.3.0"
 notify = "8.2.0"
+rand = "0.9"
 rustls = "0.23.36"
 rustls-pemfile = "2.2.0"
 serde = { version = "1.0.228", features = ["derive"] }

@@ -59,12 +59,46 @@ graph TD
 
 4. **Shared State**:
     - **LoadBalancer**: Stores the list of healthy backends. Updated by Health Checks.
-    - **HealthChecker**: background tasks that ping backends and update the LoadBalancer state atomically (using `ArcSwap` or `RwLock`).
+    - **HealthChecker**: background tasks that ping backends and update the LoadBalancer state atomically.
 
-### Concurrency Model
+### Module Structure
+
+The codebase is organized into domain-specific modules:
+
+- **`core`**: Business logic (Load Balancer, Health Checks).
+- **`networking`**: Protocol handling (Proxying, TLS).
+- **`traffic`**: Rate and Bandwidth limiting logic.
+- **`cluster`**: Distributed state management (Gossip).
+- **`config`**: Configuration parsing.
+
+### Distributed Deployment (Clustering)
+
+The Load Balancer supports a **P2P Gossip Architecture** (SWIM protocol) for state synchronization.
+
+- **Membership**: Nodes discover each other via seed peers or dynamic discovery.
+- **State Sharing**: Usage metrics (e.g., global request counts) are gossiped across the cluster.
+- **Convergence**: Allows "approximate" global rate limiting without a central bottleneck like Redis.
 
 We avoid traditional OS threads per connection. Instead, we use tens of thousands of lightweight **Tokio Tasks**.
 
 - **Memory Footprint**: Each task takes ~few KB of RAM.
 - **Context Switching**: Handled in userspace by Tokio, extremely fast.
-- **Scalability**: Can handle 100k+ concurrent connections on a single modern CPU core, limited mostly by OS file descriptors and bandwidth.
+- **Scalability**: Can handle 100k+ concurrent connections on a single modern CPU core.
+
+### Distributed Deployment (Multi-Instance)
+
+The Load Balancer uses a **Shared-Nothing Architecture**. State is not synchronized between instances.
+
+1. **Traffic Distribution**:
+    - Deploy multiple instances behind a Cloud LB (AWS NLB, GCP LB) or use DNS Round Robin.
+    - Each instance handles a subset of the traffic independently.
+
+2. **Impact on Limits**:
+    - **Rate Limits**: Configured **Per Instance**.
+        - *Example*: If you set `100 RPS` and run **3 instances**, the total cluster capacity is `300 RPS`.
+    - **Bandwidth Limits**: Configured **Per Instance**.
+        - *Example*: If you set `10 MB/s` and run **3 instances**, the total cluster bandwidth is `30 MB/s`.
+    - **Connection Limits**: configured **Per Instance**.
+
+3. **Recommendation**:
+    - Divide your total desired cluster limit by the number of instances ($Limit_{Instance} = Limit_{Total} / N_{Instances}$).

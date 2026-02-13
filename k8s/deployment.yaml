@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: layer4-lb
+  labels:
+    app: layer4-lb
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: layer4-lb
+  template:
+    metadata:
+      labels:
+        app: layer4-lb
+    spec:
+      containers:
+      - name: layer4-lb
+        image: layer4-lb:latest # Ensure you build/push this image
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080 # App Rule
+        - containerPort: 8082 # Admin Rule
+        # - containerPort: 9090 # Cluster Gossip (UDP)
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/lb.yaml
+          subPath: lb.yaml
+        resources:
+          limits:
+            cpu: "1"
+            memory: "512Mi"
+      volumes:
+      - name: config-volume
+        configMap:
+          name: lb-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lb-config
+data:
+  lb.yaml: |
+    rules:
+      - name: "App"
+        listen: "0.0.0.0:8080"
+        backends:
+          - "10.0.0.1:8080"
+          - "10.0.0.2:8080"
+      - name: "Admin"
+        listen: "0.0.0.0:8082"
+        backends:
+          - "10.0.0.1:9090"

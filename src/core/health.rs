@@ -4,7 +4,7 @@ use tokio::time::{sleep, Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use log::{debug, info};
 use crate::config::HealthCheckConfig;
-use crate::balancer::LoadBalancer;
+use crate::core::balancer::LoadBalancer;
 
 pub fn start_health_check(
     lb: Arc<LoadBalancer>,

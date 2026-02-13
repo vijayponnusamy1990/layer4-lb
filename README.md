@@ -11,10 +11,12 @@ A high-performance, multi-threaded Layer 4 (TCP) Load Balancer written in Rust. 
 - **Traffic Control**:
   - **Rate Limiting**: Token bucket (requests/sec + burst) per client IP.
   - **Bandwidth Limiting**: Token bucket byte counting (upload/download) per client or backend.
+- **Clustering**: P2P state synchronization (Gossip protocol) for distributed rate limiting.
 - **TLS Support**:
   - **Termination**: Decrypts incoming TLS (HTTPS) traffic.
   - **Re-Encryption**: Encrypts traffic to secure backends.
   - **Passthrough**: Forwards encrypted traffic without decryption.
+- **Microservice Architecture**: Modular design (`core`, `networking`, `traffic`, `cluster`).
 - **Dynamic Configuration**: Hot-reload support for `lb.yaml`.
 - **Docker Ready**: Multi-stage Dockerfile and optimized `docker-compose`.
 
@@ -72,6 +74,14 @@ rules:
     #   enabled: true
     #   cert: "./certs/server.crt"
     #   key: "./certs/server.key"
+
+# Optional: P2P Cluster Configuration
+cluster:
+  enabled: true
+  bind_addr: "0.0.0.0:9090" # UDP Gossip port
+  peers:
+    - "10.0.0.2:9090"
+
 ```
 
 ## Running Locally

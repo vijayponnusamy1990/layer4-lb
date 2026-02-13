@@ -13,6 +13,16 @@ pub enum ConfigError {
 pub struct Config {
     // List of Load Balancing Rules
     pub rules: Vec<LBRule>,
+    
+    // Cluster Configuration (Optional)
+    pub cluster: Option<ClusterConfig>,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+pub struct ClusterConfig {
+    pub enabled: bool,
+    pub bind_addr: String, // e.g., "0.0.0.0:9090"
+    pub peers: Vec<String>, // Seed peers e.g. ["10.0.0.2:9090"]
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]

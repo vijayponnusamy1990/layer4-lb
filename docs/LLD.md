@@ -92,3 +92,27 @@ The core data plane function `proxy_connection`.
 
 - Implemented inside `proxy.rs`.
 - If configured, we use `tokio_rustls::TlsConnector` to handshake with the backend *after* TCP connect but *before* limiting wrappers.
+
+## 6. Clustering (`cluster/mod.rs`)
+
+Implements distributed state using the `foca` crate (SWIM protocol).
+
+### Components
+
+- **`Cluster` Actor**:
+  - Owns the UDP socket and the `Foca` instance.
+  - Runs a loop handling:
+    - **Timer**: Triggers gossip rounds.
+    - **UDP Recv**: Passes data to `Foca`.
+    - **Command Channel**: Receives local updates to broadcast.
+- **`SimpleBroadcastHandler`**:
+  - Decodes incoming gossip messages (`UsageUpdate`).
+  - Forwards valid updates to the main application via a `mpsc` channel.
+
+### Message Flow
+
+1. **Local Update**: `RateLimiter` -> `ClusterCommand::BroadcastUsage` -> `Cluster`.
+2. **Encode**: `Cluster` wraps message in `BroadcastMessage` enum and encodes via `bincode`.
+3. **Gossip**: `Foca` piggybacks the message on UDP heartbeats to random peers.
+4. **Remote Receive**: Peer receives UDP -> `Foca` -> `BroadcastHandler` -> `rx_cluster_state`.
+5. **Apply**: Main loop receives update -> Updates Global `RateLimiter` state.

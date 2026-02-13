@@ -1,0 +1,33 @@
+[2026-02-13T09:45:52Z INFO  layer4_lb] Loaded configuration with 2 rules
+[2026-02-13T09:45:52Z INFO  layer4_lb] Initializing rule: App
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning health checkers for rule 'App'
+[2026-02-13T09:45:52Z INFO  layer4_lb] Starting 12 acceptors for rule: App
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 1/12 for rule 'App' on 0.0.0.0:8080
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 2/12 for rule 'App' on 0.0.0.0:8080
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 3/12 for rule 'App' on 0.0.0.0:8080
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 4/12 for rule 'App' on 0.0.0.0:8080
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 5/12 for rule 'App' on 0.0.0.0:8080
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 6/12 for rule 'App' on 0.0.0.0:8080
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 7/12 for rule 'App' on 0.0.0.0:8080
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 8/12 for rule 'App' on 0.0.0.0:8080
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 9/12 for rule 'App' on 0.0.0.0:8080
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 10/12 for rule 'App' on 0.0.0.0:8080
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 11/12 for rule 'App' on 0.0.0.0:8080
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 12/12 for rule 'App' on 0.0.0.0:8080
+[2026-02-13T09:45:52Z INFO  layer4_lb] Initializing rule: Admin
+[2026-02-13T09:45:52Z INFO  layer4_lb] Starting 12 acceptors for rule: Admin
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 1/12 for rule 'Admin' on 0.0.0.0:8082
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 2/12 for rule 'Admin' on 0.0.0.0:8082
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 3/12 for rule 'Admin' on 0.0.0.0:8082
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 4/12 for rule 'Admin' on 0.0.0.0:8082
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 5/12 for rule 'Admin' on 0.0.0.0:8082
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 6/12 for rule 'Admin' on 0.0.0.0:8082
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 7/12 for rule 'Admin' on 0.0.0.0:8082
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 8/12 for rule 'Admin' on 0.0.0.0:8082
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 9/12 for rule 'Admin' on 0.0.0.0:8082
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 10/12 for rule 'Admin' on 0.0.0.0:8082
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 11/12 for rule 'Admin' on 0.0.0.0:8082
+[2026-02-13T09:45:52Z INFO  layer4_lb] Spawning acceptor 12/12 for rule 'Admin' on 0.0.0.0:8082
+[2026-02-13T09:45:52Z INFO  layer4_lb] Watching config file for changes...
+[2026-02-13T09:45:52Z INFO  layer4_lb::health] Starting health check for 127.0.0.1:8083 (tcp)
+[2026-02-13T09:45:52Z INFO  layer4_lb::health] Starting health check for 127.0.0.1:8081 (tcp)

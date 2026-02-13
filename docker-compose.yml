@@ -14,6 +14,9 @@ services:
       - "8000-20000:8000-20000"
     volumes:
       - ./lb.yaml:/app/lb.yaml
+    environment:
+      - RUST_LOG=info
+      - NUM_ACCEPTORS=4 # Optional: Override auto-detection
     deploy:
       resources:
         limits:

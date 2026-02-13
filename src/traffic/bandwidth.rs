@@ -2,7 +2,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use std::sync::Arc;
-use crate::limiter::RateLimiterType;
+use crate::traffic::limiter::RateLimiterType;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 

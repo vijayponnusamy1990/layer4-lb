@@ -8,18 +8,18 @@ use tokio::sync::mpsc;
 use tokio::sync::RwLock;
 use std::collections::HashMap;
 
+
 mod config;
-mod balancer;
-mod tls;
-mod proxy;
-mod limiter;
-mod error;
-mod bandwidth;
-mod health;
+mod core;
+mod networking;
+mod traffic;
+mod common;
+mod cluster;
 
 use config::{Config, RateLimitConfig, BandwidthLimitConfig};
-use limiter::{RateLimiter, BandwidthManager};
-use proxy::ProxyConfig;
+use traffic::limiter::{RateLimiter, BandwidthManager};
+use networking::proxy::{self, ProxyConfig};
+use core::{balancer, health};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -73,7 +73,7 @@ async fn main() -> anyhow::Result<()> {
         // TLS Setup
         let tls_acceptor = if let Some(tls_config) = &rule.tls {
              if tls_config.enabled {
-                 Some(Arc::new(tls::load_tls_config(&tls_config.cert, &tls_config.key)?))
+                 Some(Arc::new(crate::networking::tls::load_tls_config(&tls_config.cert, &tls_config.key)?))
              } else {
                  None
              }
@@ -87,8 +87,16 @@ async fn main() -> anyhow::Result<()> {
         
         let addr: SocketAddr = rule.listen.parse().map_err(|e| anyhow::anyhow!("Invalid address: {}", e))?;
         
-        // Spawn multiple acceptors (e.g., one per core or fixed number)
-        let num_acceptors = 4; // Tuning parameter
+        
+        // Spawn multiple acceptors (one per core is good for high ops)
+        // Default to available parallelism or 4 if unknown.
+        let default_acceptors = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+        let num_acceptors = std::env::var("NUM_ACCEPTORS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(default_acceptors);
+        
+        info!("Starting {} acceptors for rule: {}", num_acceptors, rule.name);
 
         for i in 0..num_acceptors {
             let rule_name = rule.name.clone();
@@ -126,23 +134,8 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
 
-            // Setup TLS if configured
-            let tls_acceptor = if let Some(tls_config) = &rule.tls {
-                if tls_config.enabled {
-                     info!("Loading TLS config for rule '{}'", rule_name);
-                     match crate::tls::load_tls_config(&tls_config.cert, &tls_config.key) {
-                         Ok(acceptor) => Some(acceptor),
-                         Err(e) => {
-                             error!("Failed to load TLS config for rule '{}': {}", rule_name, e);
-                             continue; // Skip this acceptor if TLS fails
-                         }
-                     }
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
+            // Use the outer tls_acceptor
+
             
             // let tls_acceptor_clone = tls_acceptor.clone(); // No, TlsAcceptor is Arc internally usually, but here we can clone it. 
             // Actually TlsAcceptor is cheap to clone (Arc).
@@ -214,6 +207,42 @@ async fn main() -> anyhow::Result<()> {
             });
         }
     }
+
+
+    // --- Cluster Setup ---
+    // Channel for application to send commands to cluster
+    let (_tx_cluster_cmd, rx_cluster_cmd) = mpsc::channel(100);
+    // Channel for cluster to send state updates (node_id, key, usage)
+    let (tx_cluster_state, mut rx_cluster_state) = mpsc::channel(1000);
+
+    if let Some(cluster_config) = &config.cluster {
+        if cluster_config.enabled {
+            info!("Initializing Cluster on {}", cluster_config.bind_addr);
+            let bind_addr = cluster_config.bind_addr.parse().expect("Invalid cluster bind address");
+            let seeds: Vec<std::net::SocketAddr> = cluster_config.peers.iter()
+                .map(|s| s.parse().expect("Invalid seed address"))
+                .collect();
+            
+            match cluster::Cluster::new(bind_addr, seeds.clone(), rx_cluster_cmd, tx_cluster_state).await {
+                Ok(cluster) => {
+                    tokio::spawn(async move {
+                        cluster.run(seeds).await;
+                    });
+                    info!("Cluster started.");
+                }
+                Err(e) => error!("Failed to start cluster: {}", e),
+            }
+        }
+    }
+    
+    // Spawn a task to handle cluster state updates (placeholder for now)
+    tokio::spawn(async move {
+        while let Some((node_id, key, usage)) = rx_cluster_state.recv().await {
+            info!("Cluster Update: Node {} Key {} Usage {}", node_id, key, usage);
+            // TODO: Update global rate limiter
+        }
+    });
+
 
     // 3. Setup Config Watcher (Hot Reload)
     let (tx, mut rx) = mpsc::channel(1);

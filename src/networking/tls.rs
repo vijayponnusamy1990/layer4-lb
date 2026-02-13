@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
 use tokio_rustls::TlsAcceptor;
-use crate::error::{LbError, Result};
+use crate::common::error::{LbError, Result};
 
 pub fn load_tls_config(cert_path: &str, key_path: &str) -> Result<TlsAcceptor> {
     let cert_file = File::open(cert_path).map_err(LbError::Io)?;

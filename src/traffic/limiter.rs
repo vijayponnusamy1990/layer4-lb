@@ -91,10 +91,11 @@ impl BandwidthManager {
     }
 
     pub fn get_client_upload_limiter(&self, ip: IpAddr) -> Option<Arc<RateLimiterType>> {
+        if !self.config.enabled { return None; }
         let limits = self.config.client.as_ref()?;
         Some(self.client_upload.entry(ip).or_insert_with(|| {
              let rate = limits.upload_per_sec;
-             println!("Creating new Client Upload limiter for {} with rate {}", ip, rate);
+             // println!("Creating new Client Upload limiter for {} with rate {}", ip, rate); // reduce log spam
              let quota = Quota::per_second(NonZeroU32::new(rate).unwrap_or(NonZeroU32::new(1024).unwrap()))
                 .allow_burst(NonZeroU32::new(rate).unwrap_or(NonZeroU32::new(1024).unwrap()));
             Arc::new(GovernorLimiter::direct(quota))
@@ -102,8 +103,9 @@ impl BandwidthManager {
     }
 
     pub fn get_client_download_limiter(&self, ip: IpAddr) -> Option<Arc<RateLimiterType>> {
+        if !self.config.enabled { return None; }
         let limits = self.config.client.as_ref()?;
-        Some(self.client_download.entry(ip).or_insert_with(|| {
+         Some(self.client_download.entry(ip).or_insert_with(|| {
              let rate = limits.download_per_sec;
              let quota = Quota::per_second(NonZeroU32::new(rate).unwrap_or(NonZeroU32::new(1024).unwrap()))
                 .allow_burst(NonZeroU32::new(rate).unwrap_or(NonZeroU32::new(1024).unwrap()));
@@ -111,13 +113,17 @@ impl BandwidthManager {
         }).value().clone())
     }
 
-    pub fn get_backend_upload_limiter(&self, addr: String) -> Option<Arc<RateLimiterType>> {
+    pub fn get_backend_upload_limiter(&self, key: String) -> Option<Arc<RateLimiterType>> {
+        if !self.config.enabled { return None; }
         let limits = self.config.backend.as_ref()?;
-        Some(self.get_limiter(&self.backend_upload, addr, limits.upload_per_sec))
+        Some(self.get_limiter(&self.backend_upload, key, limits.upload_per_sec))
     }
 
-    pub fn get_backend_download_limiter(&self, addr: String) -> Option<Arc<RateLimiterType>> {
+    pub fn get_backend_download_limiter(&self, key: String) -> Option<Arc<RateLimiterType>> {
+        if !self.config.enabled { return None; }
         let limits = self.config.backend.as_ref()?;
-        Some(self.get_limiter(&self.backend_download, addr, limits.download_per_sec))
+        Some(self.get_limiter(&self.backend_download, key, limits.download_per_sec))
     }
+
+
 }
