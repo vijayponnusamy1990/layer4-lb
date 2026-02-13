@@ -1,0 +1,72 @@
+rules:
+  # 1. Plain TCP Proxy (Can technically pass through TLS if backend is TLS)
+  # Test: curl http://localhost:8080
+  - name: "PlainProxy"
+    listen: "0.0.0.0:8080"
+    backends:
+      - "127.0.0.1:8081"
+    rate_limit:
+        enabled: false
+
+  # 2. TLS Termination
+  # LB terminates TLS, talks plain TCP to backend.
+  # Test: curl -k https://localhost:8443
+  - name: "TlsTermination"
+    listen: "0.0.0.0:8443"
+    tls:
+      enabled: true
+      cert: "./certs/server.crt"
+      key: "./certs/server.key"
+    backends:
+      - "127.0.0.1:8081" # Plain backend
+    rate_limit:
+        enabled: false
+    bandwidth_limit:
+        enabled: true
+        client:
+            upload_per_sec: 1048576 # 1MB/s
+            download_per_sec: 1048576
+        backend:
+            upload_per_sec: 1048576
+            download_per_sec: 1048576
+
+  # 3. TLS Re-Encryption (Backend TLS)
+  # LB terminates TLS, then talks TLS to backend.
+  # Test: curl -k https://localhost:9443
+  - name: "TlsReEncrypt"
+    listen: "0.0.0.0:9443"
+    tls:
+      enabled: true
+      cert: "./certs/server.crt"
+      key: "./certs/server.key"
+    backend_tls:
+      enabled: true
+      ignore_verify: true
+    backends:
+      - "127.0.0.1:8444" # Secure backend (simulated)
+    rate_limit:
+        enabled: true
+        requests_per_second: 5
+        burst: 10
+
+  # 4. TLS Passthrough (No Termination)
+  # LB forwards encrypted bytes. Backend must have certs.
+  # LIMITS DO WORK! (Bandwidth = Bytes, Rate = Connections)
+  # Test: curl -k https://localhost:9445
+  - name: "TlsPassthrough"
+    listen: "0.0.0.0:9445"
+    # No 'tls' section = Passthrough
+    backends:
+      - "127.0.0.1:8444" # Same secure backend
+    rate_limit:
+        enabled: true
+        requests_per_second: 10 # Connections/sec
+        burst: 20
+    bandwidth_limit:
+        enabled: true
+        client:
+             upload_per_sec: 2097152 # 2MB/s
+             download_per_sec: 2097152
+        backend:
+             upload_per_sec: 2097152
+             download_per_sec: 2097152

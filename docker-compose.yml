@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  lb:
+    build: .
+    container_name: layer4-lb
+    # network_mode: "host" # BEST FOR PROD LINUX: Bypasses NAT, allows dynamic ports, max performance.
+    ports:
+      # Option 1: Static mapping (Good for known services)
+      # - "8080:8080"
+      # - "8082:8082"
+      # Option 2: Port Range (Good for dynamic rules). 
+      # WARNING: Docker creates a proxy process for EACH port. Don't map 1-65535!
+      - "8000-20000:8000-20000"
+    volumes:
+      - ./lb.yaml:/app/lb.yaml
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536

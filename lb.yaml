@@ -1,0 +1,38 @@
+rules:
+  - name: "App"
+    listen: "0.0.0.0:8080"
+    backends:
+      - "127.0.0.1:8081"
+      - "127.0.0.1:8083" # Echo server 1
+    backend_connection_limit: 100
+    rate_limit:
+        enabled: true
+        requests_per_second: 100
+        burst: 50
+    bandwidth_limit:
+        enabled: true
+        client:
+            upload_per_sec: 10485760 # 10MB/s
+            download_per_sec: 10485760
+        backend:
+            upload_per_sec: 10485760
+            download_per_sec: 10485760
+    # TLS Configuration Example (Optional)
+    # tls:
+    #   enabled: true
+    #   cert: "./certs/server.crt"
+    #   key: "./certs/server.key"
+    health_check:
+        enabled: true
+        interval_ms: 5000
+        timeout_ms: 1000
+        protocol: "tcp"
+        # path: "/health" # Default for tcp is None
+
+  - name: "Admin"
+    listen: "0.0.0.0:8082"
+    backends:
+      - "127.0.0.1:8082" # Echo server 2
+    # No limits on Admin usually, or different ones
+    bandwidth_limit:
+        enabled: false

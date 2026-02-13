@@ -1,0 +1,25 @@
+[package]
+name = "layer4-lb"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.101"
+arc-swap = "1.8.1"
+clap = { version = "4.5.58", features = ["derive"] }
+dashmap = "6.1.0"
+env_logger = "0.11.9"
+futures = "0.3.31"
+governor = "0.10.4"
+log = "0.4.29"
+nonzero_ext = "0.3.0"
+notify = "8.2.0"
+rustls = "0.23.36"
+rustls-pemfile = "2.2.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_yaml = "0.9.34"
+socket2 = "0.6.2"
+thiserror = "2.0.18"
+tokio = { version = "1.49.0", features = ["full"] }
+tokio-rustls = "0.26.4"
+webpki-roots = "1.0.6"
