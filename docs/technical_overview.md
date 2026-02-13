@@ -142,8 +142,8 @@ health_check:
 ```mermaid
 graph TD
     Client[Client] -->|TCP SYN| Interface[Network Interface]
-    Interface -->|Rule 1 (Port 8080)| Acceptor1[Acceptor Task 1]
-    Interface -->|Rule 1 (Port 8080)| Acceptor2[Acceptor Task 2]
+    Interface -->|"Rule 1 (Port 8080)"| Acceptor1[Acceptor Task 1]
+    Interface -->|"Rule 1 (Port 8080)"| Acceptor2[Acceptor Task 2]
     
     subgraph "Load Balancer Process"
         Acceptor1 -->|Spawn| ProxyTask[Proxy Task]
