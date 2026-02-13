@@ -2,7 +2,7 @@
 
 This document details the internal logic and data structures of the core modules.
 
-## 1. Load Balancer (`balancer.rs`)
+## 1. Load Balancer (`core/balancer.rs`)
 
 Responsible for selecting the backend for a new connection.
 
@@ -21,7 +21,24 @@ Responsible for selecting the backend for a new connection.
     4. Returns `backends[index % length]`.
   - *Optimization*: Uses `ArcSwap` allows wait-free reads while the Health Checker updates the list in the background.
 
-## 2. Rate Limiting (`limiter.rs`)
+  - *Optimization*: Uses `ArcSwap` allows wait-free reads while the Health Checker updates the list in the background.
+
+## 2. Health Checks (`core/health.rs`)
+
+Active probing of backend health.
+
+### Components
+
+- **`ActiveHealthCheck`**: Struct holding configuration (`interval`, `timeout`, `path`).
+- **`start_health_check_loop`**:
+  - Spawns a background Tokio task for each backend.
+  - **Loop**:
+    1. Sleep for `interval`.
+    2. Attempt TCP connect (or HTTP request).
+    3. Update `Backend` status (`healthy` bit).
+    4. If status changed, notify `LoadBalancer` to update the active pool.
+
+## 3. Rate Limiting (`traffic/limiter.rs`)
 
 Implements the **Token Bucket** algorithm to control request rate and bandwidth.
 
@@ -42,7 +59,7 @@ Implements the **Token Bucket** algorithm to control request rate and bandwidth.
 - Same Token Bucket logic, but tokens represent **Bytes**.
 - Shared generic `RateLimiter<Key, Bucket>`.
 
-## 3. Bandwidth Streams (`bandwidth.rs`)
+## 4. Bandwidth Streams (`traffic/bandwidth.rs`)
 
 To limit bandwidth without blocking the thread, we implement a custom Async Stream wrapper.
 
@@ -60,7 +77,7 @@ Wraps an underlying stream `S` (e.g., `TcpStream`).
 - **`poll_write`**:
     Similar logic. Before writing bytes to socket, we must "pay" tokens.
 
-## 4. Connection Proxying (`proxy.rs`)
+## 5. Connection Proxying (`networking/proxy.rs`)
 
 The core data plane function `proxy_connection`.
 
@@ -80,7 +97,7 @@ The core data plane function `proxy_connection`.
     - When one side closes (FIN), the copy finishes.
     - Function returns, dropping all sockets and freeing resources.
 
-## 5. TLS Integration (`tls.rs`, `main.rs`)
+## 6. TLS Integration (`networking/tls.rs`, `main.rs`)
 
 ### Termination
 
@@ -93,7 +110,7 @@ The core data plane function `proxy_connection`.
 - Implemented inside `proxy.rs`.
 - If configured, we use `tokio_rustls::TlsConnector` to handshake with the backend *after* TCP connect but *before* limiting wrappers.
 
-## 6. Clustering (`cluster/mod.rs`)
+## 7. Clustering (`cluster/mod.rs`)
 
 Implements distributed state using the `foca` crate (SWIM protocol).
 

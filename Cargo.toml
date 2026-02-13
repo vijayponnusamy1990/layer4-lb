@@ -27,3 +27,11 @@ thiserror = "2.0.18"
 tokio = { version = "1.49.0", features = ["full"] }
 tokio-rustls = "0.26.4"
 webpki-roots = "1.0.6"
+
+[[bin]]
+name = "layer4-lb"
+path = "src/main.rs"
+
+[[bin]]
+name = "throughput"
+path = "utilities/throughput.rs"

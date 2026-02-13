@@ -43,6 +43,49 @@ A high-performance, multi-threaded Layer 4 (TCP) Load Balancer written in Rust. 
 
     The binary will be located at `target/release/layer4-lb`.
 
+## Quick Start Scenarios
+
+### 1. Simple Load Balancer
+
+Forward traffic from 8080 to two backends:
+
+```yaml
+rules:
+  - name: "SimpleHTTP"
+    listen: "0.0.0.0:8080"
+    backends: ["127.0.0.1:8081", "127.0.0.1:8082"]
+```
+
+### 2. TLS Termination (HTTPS)
+
+Decrypt traffic at LB, forward plain text to backend:
+
+```yaml
+rules:
+  - name: "SecureWeb"
+    listen: "0.0.0.0:443"
+    backends: ["127.0.0.1:8080"]
+    tls:
+      enabled: true
+      cert: "./certs/server.crt"
+      key: "./certs/server.key"
+```
+
+### 3. Rate Limiting Protection
+
+Limit each client IP to 100 req/s:
+
+```yaml
+rules:
+  - name: "ProtectedAPI"
+    listen: "0.0.0.0:9090"
+    backends: ["127.0.0.1:9091"]
+    rate_limit:
+      enabled: true
+      requests_per_second: 100
+      burst: 20
+```
+
 ## Configuration
 
 Control the load balancer using a YAML configuration file (default: `lb.yaml`).
@@ -89,8 +132,8 @@ cluster:
 1. **Generate Certificates** (if testing TLS):
 
     ```bash
-    chmod +x generate_certs.sh
-    ./generate_certs.sh
+    chmod +x utilities/generate_certs.sh
+    ./utilities/generate_certs.sh
     ```
 
 2. **Run the Load Balancer**:
@@ -128,5 +171,16 @@ For testing different TLS modes, use the provided test config:
 ```bash
 cargo run --release -- --config lb_tls_test.yaml
 ```
+
+## Utilities
+
+Helper scripts are located in the `utilities/` directory:
+
+- **`generate_certs.sh`**: Generates self-signed certificates for testing.
+- **`throughput.rs`**: High-performance benchmark tool (Source/Sink).
+  - Source code moved to `utilities/`.
+  - Run via Cargo: `cargo run --release --bin throughput -- server 9001`
+- **Python Scripts**: Various test clients (e.g., `echo_server.py`, `failover_test.py`, `benchmark.py`).
+  - Run them from the project root: `python3 utilities/echo_server.py 8081`
 
 See `docs/` for detailed architecture documentation.
