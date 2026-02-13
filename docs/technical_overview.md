@@ -148,8 +148,8 @@ graph TD
     subgraph "Load Balancer Process"
         Acceptor1 -->|Spawn| ProxyTask[Proxy Task]
         
-        ProxyTask -->|Check| RateLimiter[Rate Limiter (Token Bucket)]
-        ProxyTask -->|Select| LoadBalancer[Load Balancer (Round Robin)]
+        ProxyTask -->|Check| RateLimiter["Rate Limiter (Token Bucket)"]
+        ProxyTask -->|Select| LoadBalancer["Load Balancer (Round Robin)"]
         
         LoadBalancer -->|Return IP| ProxyTask
         
