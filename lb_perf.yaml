@@ -1,8 +1,11 @@
+log:
+  level: "info"
+
 rules:
   - name: "ThroughputTest"
     listen: "0.0.0.0:9000"
     backends:
-      - "127.0.0.1:9001"
+      - "127.0.0.1:6379"
     rate_limit:
         enabled: false
         requests_per_second: 1

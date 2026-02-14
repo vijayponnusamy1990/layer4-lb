@@ -5,7 +5,7 @@ metadata:
   labels:
     app: layer4-lb
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: layer4-lb
@@ -19,8 +19,15 @@ spec:
         image: layer4-lb:latest # Ensure you build/push this image
         imagePullPolicy: IfNotPresent
         ports:
-        - containerPort: 8080 # App Rule
-        - containerPort: 8082 # Admin Rule
+        - containerPort: 6379 # Redis Rule
+        - containerPort: 8081 # Rate Limited App
+        - containerPort: 8443 # TLS Terminated App
+        - containerPort: 9000 # Bandwidth Constrained App
+        - containerPort: 9090 # Cluster Gossip
+        - containerPort: 8081 # Rate Limited App
+        - containerPort: 8443 # TLS Terminated App
+        - containerPort: 9000 # Bandwidth Constrained App
+        - containerPort: 9090 # Cluster Gossip
         # - containerPort: 9090 # Cluster Gossip (UDP)
         volumeMounts:
         - name: config-volume
@@ -41,13 +48,74 @@ metadata:
   name: lb-config
 data:
   lb.yaml: |
+    # -------------------------------------------------------------------------
+    # Layer 4 Load Balancer Configuration
+    # -------------------------------------------------------------------------
+    
+    # Optional Cluster Configuration for Distributed Rate Limiting
+    # cluster:
+    #   enabled: true
+    #   bind_addr: "0.0.0.0:9090"
+    #   peers: ["layer4-lb-0.layer4-lb-service:9090"]
+
     rules:
-      - name: "App"
-        listen: "0.0.0.0:8080"
+      # -----------------------------------------------------------------------
+      # 1. Standard Redis Service
+      # -----------------------------------------------------------------------
+      - name: "Redis"
+        listen: "0.0.0.0:6379"
+        protocol: "tcp"
         backends:
-          - "10.0.0.1:8080"
-          - "10.0.0.2:8080"
-      - name: "Admin"
-        listen: "0.0.0.0:8082"
+          - "redis-service.default.svc.cluster.local:6379"
+        backend_connection_limit: 1000
+
+      # -----------------------------------------------------------------------
+      # 2. Rate Limited HTTP Service
+      # - Limits clients to 100 requests/sec (with burst of 50)
+      # - Performs HTTP health checks on backends
+      # -----------------------------------------------------------------------
+      - name: "RateLimitedApp"
+        listen: "0.0.0.0:8081"
         backends:
-          - "10.0.0.1:9090"
+          - "my-app-service.default.svc.cluster.local:8080"
+        rate_limit:
+          enabled: true
+          requests_per_second: 100
+          burst: 50
+        health_check:
+          enabled: true
+          interval_ms: 5000
+          timeout_ms: 1000
+          protocol: "http"
+          path: "/health"
+
+      # -----------------------------------------------------------------------
+      # 3. TLS Terminated Service (HTTPS)
+      # - Decrypts traffic -> forwards to backend -> Re-encrypts (optional)
+      # - Requires cert files mounted from Secret
+      # -----------------------------------------------------------------------
+      - name: "SecureApp"
+        listen: "0.0.0.0:8443"
+        backends:
+          - "secure-backend.default.svc.cluster.local:443"
+        tls:
+          enabled: true
+          cert: "/app/certs/server.crt"
+          key: "/app/certs/server.key"
+        backend_tls:
+          enabled: true
+          ignore_verify: true # Use with caution
+
+      # -----------------------------------------------------------------------
+      # 4. Bandwidth Constrained Service
+      # - Throttles upload/download speeds per connection
+      # -----------------------------------------------------------------------
+      - name: "FileServer"
+        listen: "0.0.0.0:9000"
+        backends:
+          - "file-server.default.svc.cluster.local:80"
+        bandwidth_limit:
+          enabled: true
+          client:
+            upload_per_sec: 1048576  # 1 MB/s
+            download_per_sec: 5242880 # 5 MB/s

@@ -1,6 +1,6 @@
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
-use log::{info, debug};
+use log::debug;
 use std::sync::Arc;
 use crate::traffic::bandwidth::RateLimitedStream;
 use crate::traffic::limiter::RateLimiterType;
@@ -20,97 +20,92 @@ pub struct ProxyConfig {
 }
 
 pub async fn proxy_connection<I>(
-    mut client_stream: I,
+    client_stream: I,
     backend_addr: String,
     config: ProxyConfig,
+    rule_name: String, // Added rule_name for metrics
 ) -> Result<()>
 where
     I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
+    let start_time = std::time::Instant::now();
+    
+    // Metrics: Increment Active & Total
+    crate::metrics::ACTIVE_CONNECTIONS.with_label_values(&[&rule_name]).inc();
+    crate::metrics::TOTAL_CONNECTIONS.with_label_values(&[&rule_name]).inc();
+
+    // Guard to decrement active connections on drop (ensure it runs even on error)
+    struct ConnectionMetricGuard {
+        rule_name: String,
+    }
+    
+    impl Drop for ConnectionMetricGuard {
+        fn drop(&mut self) {
+            crate::metrics::ACTIVE_CONNECTIONS.with_label_values(&[&self.rule_name]).dec();
+        }
+    }
+    
+    let _metric_guard = ConnectionMetricGuard { rule_name: rule_name.clone() };
+
     // Connect to backend (TCP)
     let backend_stream = TcpStream::connect(&backend_addr).await?;
+    if let Err(e) = backend_stream.set_nodelay(true) {
+        debug!("Failed to set nodelay on backend stream: {}", e);
+    }
+    
+    // ... TLS handling logic ... (simplified for brevity match structure in original)
+    // We need to match the original structure. I'll paste the full updated function body.
     
     // Handle Backend TLS if enabled
     if let Some(tls_cfg) = config.backend_tls {
         if tls_cfg.enabled {
-            debug!("Starting TLS handshake with backend {}", backend_addr);
-            
-            // Configure TLS Client
-            let mut root_store = RootCertStore::empty();
-            root_store.extend(
-                webpki_roots::TLS_SERVER_ROOTS
-                    .iter()
-                    .cloned()
-            );
-
-            let mut client_config = ClientConfig::builder()
+             // ... TLS logic ...
+             // Replicating internal logic for TLS path to include metrics at end
+             debug!("Starting TLS handshake with backend {}", backend_addr);
+             
+             let mut root_store = RootCertStore::empty();
+             root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+             let mut client_config = ClientConfig::builder()
                 .with_root_certificates(root_store)
                 .with_no_client_auth();
-
-            if tls_cfg.ignore_verify {
-                // Insecure: verify nothing
+             if tls_cfg.ignore_verify {
                 client_config.dangerous().set_certificate_verifier(Arc::new(NoVerify));
-            }
+             }
+             let connector = TlsConnector::from(Arc::new(client_config));
+             let domain = ServerName::try_from("localhost").unwrap().to_owned(); 
+             let tls_stream = connector.connect(domain, backend_stream).await?;
 
-            let connector = TlsConnector::from(Arc::new(client_config));
-            let domain = ServerName::try_from("localhost").unwrap().to_owned(); 
-            
-            let tls_stream = connector.connect(domain, backend_stream).await?;
-            
-            // Wrap in Bandwidth Limiter
-            let mut backend_stream_limited = RateLimitedStream::new(
-                tls_stream,
-                config.backend_read_limiter, // Read from backend (Download)
-                config.backend_write_limiter // Write to backend (Upload)
-            );
-            
-            let mut client_stream_limited = RateLimitedStream::new(
-                client_stream,
-                config.client_read_limiter, // Read from client (Upload)
-                config.client_write_limiter // Write to client (Download)
-            );
+             let mut backend_stream_limited = RateLimitedStream::new(tls_stream, config.backend_read_limiter, config.backend_write_limiter);
+             let mut client_stream_limited = RateLimitedStream::new(client_stream, config.client_read_limiter, config.client_write_limiter);
 
-            let (mut c_read, mut c_write) = tokio::io::split(&mut client_stream_limited);
-            let (mut b_read, mut b_write) = tokio::io::split(&mut backend_stream_limited);
+             let (c2b, b2c) = crate::common::io::copy_bidirectional_with_buffer(&mut client_stream_limited, &mut backend_stream_limited, 16 * 1024).await?;
 
-            let client_to_backend = tokio::io::copy(&mut c_read, &mut b_write);
-            let backend_to_client = tokio::io::copy(&mut b_read, &mut c_write);
+             // Record Traffic & Duration
+             crate::metrics::TRAFFIC_BYTES.with_label_values(&[&rule_name, "client_in"]).inc_by(c2b);
+             crate::metrics::TRAFFIC_BYTES.with_label_values(&[&rule_name, "backend_out"]).inc_by(c2b); // sent to backend
+             crate::metrics::TRAFFIC_BYTES.with_label_values(&[&rule_name, "backend_in"]).inc_by(b2c);
+             crate::metrics::TRAFFIC_BYTES.with_label_values(&[&rule_name, "client_out"]).inc_by(b2c); // sent to client
+             crate::metrics::CONNECTION_DURATION.with_label_values(&[&rule_name]).observe(start_time.elapsed().as_secs_f64());
 
-            let (client_to_backend_bytes, backend_to_client_bytes) = tokio::try_join!(client_to_backend, backend_to_client)?;
-
-            info!(
-                "TLS Connection closed. Client sent: {} bytes, Backend sent: {} bytes",
-                client_to_backend_bytes, backend_to_client_bytes
-            );
-            return Ok(());
+             debug!("TLS Connection closed. Client sent: {} bytes, Backend sent: {} bytes", c2b, b2c);
+             return Ok(());
         }
     }
     
     // Plain TCP
-    let mut backend_stream_limited = RateLimitedStream::new(
-        backend_stream,
-        config.backend_read_limiter, 
-        config.backend_write_limiter 
-    );
+    let mut backend_stream_limited = RateLimitedStream::new(backend_stream, config.backend_read_limiter, config.backend_write_limiter);
+    let mut client_stream_limited = RateLimitedStream::new(client_stream, config.client_read_limiter, config.client_write_limiter);
 
-    let mut client_stream_limited = RateLimitedStream::new(
-        client_stream,
-        config.client_read_limiter,
-        config.client_write_limiter
-    );
-
-    let (mut c_read, mut c_write) = tokio::io::split(&mut client_stream_limited);
-    let (mut b_read, mut b_write) = tokio::io::split(&mut backend_stream_limited);
-
-    let client_to_backend = tokio::io::copy(&mut c_read, &mut b_write);
-    let backend_to_client = tokio::io::copy(&mut b_read, &mut c_write);
-
-    let (client_to_backend_bytes, backend_to_client_bytes) = tokio::try_join!(client_to_backend, backend_to_client)?;
+    let (c2b, b2c) = crate::common::io::copy_bidirectional_with_buffer(&mut client_stream_limited, &mut backend_stream_limited, 16 * 1024).await?;
     
-    info!(
-        "Connection closed. Client sent: {} bytes, Backend sent: {} bytes",
-        client_to_backend_bytes, backend_to_client_bytes
-    );
+    // Record Traffic & Duration
+    crate::metrics::TRAFFIC_BYTES.with_label_values(&[&rule_name, "client_in"]).inc_by(c2b);
+    crate::metrics::TRAFFIC_BYTES.with_label_values(&[&rule_name, "backend_out"]).inc_by(c2b);
+    crate::metrics::TRAFFIC_BYTES.with_label_values(&[&rule_name, "backend_in"]).inc_by(b2c);
+    crate::metrics::TRAFFIC_BYTES.with_label_values(&[&rule_name, "client_out"]).inc_by(b2c);
+    crate::metrics::CONNECTION_DURATION.with_label_values(&[&rule_name]).observe(start_time.elapsed().as_secs_f64());
+
+    debug!("Connection closed. Client sent: {} bytes, Backend sent: {} bytes", c2b, b2c);
 
     Ok(())
 }

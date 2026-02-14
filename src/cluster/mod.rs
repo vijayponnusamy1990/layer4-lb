@@ -4,11 +4,9 @@ use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use serde::{Serialize, Deserialize};
-use rand::{rngs::StdRng, Rng, SeedableRng}; 
+use rand::{rngs::StdRng, SeedableRng}; 
 use std::time::Duration;
 use bytes::Bytes;
-use anyhow;
-use bincode; // Now v2
 use std::fmt;
 
 // --- Data Structures ---
@@ -47,16 +45,7 @@ impl Identity for NodeIdentity {
     fn renew(&self) -> Option<Self> {
         Some(Self {
             addr: self.addr,
-            // rand 0.9 might change gen()? 
-            // If random() is preferred, check docs.
-            // But let's assume r#gen() works or random().
-            // ThreadRng implements Rng.
-            id: rand::random(), // rand 0.9 uses rand::rng() and random()?
-            // Or rand::thread_rng().gen()?
-            // rand 0.9 removed thread_rng()? Replaced with rng().
-            // And gen() replaced with random()?
-            // Let's use `rand::random()` free function for simplicity if available?
-            // Or `rand::rng().random()`.
+            id: rand::random(), 
         })
     }
 
@@ -72,14 +61,16 @@ impl Identity for NodeIdentity {
 // Commands from Application to Cluster
 #[derive(Debug)]
 pub enum ClusterCommand {
+    #[allow(dead_code)]
     BroadcastUsage(String, u32),
 }
 
-// --- Custom Error ---
+// ...
 
 #[derive(Debug)]
 pub enum ClusterError {
     Bincode(bincode::error::DecodeError),
+    #[allow(dead_code)]
     Anyhow(String),
 }
 

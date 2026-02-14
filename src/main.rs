@@ -15,6 +15,7 @@ mod networking;
 mod traffic;
 mod common;
 mod cluster;
+pub mod metrics;
 
 use config::{Config, RateLimitConfig, BandwidthLimitConfig};
 use traffic::limiter::{RateLimiter, BandwidthManager};
@@ -30,13 +31,22 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    env_logger::init();
     let args = Args::parse();
 
     // 1. Load Initial Configuration
     let config_content = std::fs::read_to_string(&args.config)?;
     let config: Config = serde_yaml::from_str(&config_content)?;
     config.validate()?;
+
+    // Initialize Logger
+    let log_level = if let Some(log_config) = &config.log {
+        &log_config.level
+    } else {
+        "info"
+    };
+    
+    let mut builder = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level));
+    builder.init();
 
     info!("Loaded configuration with {} rules", config.rules.len());
 
@@ -47,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
     for rule in config.rules.iter() {
         info!("Initializing rule: {}", rule.name);
         
-        let lb = Arc::new(balancer::LoadBalancer::new(rule.backends.clone(), rule.backend_connection_limit));
+        let lb = Arc::new(balancer::LoadBalancer::new(rule.name.clone(), rule.backends.clone(), rule.backend_connection_limit));
         lbs.write().await.insert(rule.name.clone(), lb.clone());
 
         // Spawn Health Checkers
@@ -153,6 +163,10 @@ async fn main() -> anyhow::Result<()> {
                 loop {
                      match listener.accept().await {
                         Ok((stream, client_addr)) => {
+                            if let Err(e) = stream.set_nodelay(true) {
+                                warn!("Failed to set nodelay on client stream: {}", e);
+                            }
+                            
                             // Rate Limit
                              if !rl_clone.check(client_addr.ip()) {
                                 continue;
@@ -188,14 +202,14 @@ async fn main() -> anyhow::Result<()> {
                                 if let Some(acceptor) = tls {
                                     match acceptor.accept(stream).await {
                                         Ok(tls_stream) => {
-                                            if let Err(_e) = proxy::proxy_connection(tls_stream, backend_addr, proxy_config).await {
+                                    if let Err(_e) = proxy::proxy_connection(tls_stream, backend_addr, proxy_config, r_name.clone()).await {
                                                 // error!("[{}] Proxy error: {}", r_name, e);
                                             }
                                          }
                                         Err(e) => error!("[{}] TLS handshake error: {}", r_name, e),
                                     }
                                 } else {
-                                    if let Err(_e) = proxy::proxy_connection(stream, backend_addr, proxy_config).await {
+                                    if let Err(_e) = proxy::proxy_connection(stream, backend_addr, proxy_config, r_name.clone()).await {
                                         // error!("[{}] Proxy error: {}", r_name, e);
                                     }
                                 }
@@ -243,6 +257,38 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+
+    // --- Metrics Server ---
+    tokio::spawn(async move {
+        use hyper::server::conn::http1;
+        use hyper::service::service_fn;
+        // use hyper::{Request, Response, StatusCode}; // Removed unused imports
+        use hyper_util::rt::TokioIo;
+        
+        let addr = std::net::SocketAddr::from(([0, 0, 0, 0], 9091));
+        let listener = match tokio::net::TcpListener::bind(addr).await {
+            Ok(l) => l,
+            Err(e) => {
+                error!("Failed to bind metrics port: {}", e);
+                return;
+            }
+        };
+        info!("Metrics server listening on http://{}", addr);
+
+        loop {
+            if let Ok((stream, _)) = listener.accept().await {
+                let io = TokioIo::new(stream);
+                tokio::spawn(async move {
+                    if let Err(_err) = http1::Builder::new()
+                        .serve_connection(io, service_fn(crate::metrics::metrics_handler))
+                        .await
+                    {
+                        // error!("Error serving metrics: {:?}", err);
+                    }
+                });
+            }
+        }
+    });
 
     // 3. Setup Config Watcher (Hot Reload)
     let (tx, mut rx) = mpsc::channel(1);

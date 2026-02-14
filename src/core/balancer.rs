@@ -5,27 +5,37 @@ use log::{warn, info};
 
 #[derive(Clone)]
 pub struct LoadBalancer {
-    pub backends: Arc<ArcSwap<Vec<Arc<Backend>>>>, // Changed to ArcSwap for wait-free reads
+    pub rule_name: String, // Added for metrics
+    pub backends: Arc<ArcSwap<Vec<Arc<Backend>>>>, 
     current: Arc<AtomicUsize>,
     connection_limit: Option<usize>,
 }
 
 #[derive(Clone)]
 pub struct Backend {
+    pub rule_name: String, // Added for metrics
     pub addr: String,
     pub active_connections: Arc<AtomicUsize>,
     pub healthy: Arc<AtomicBool>,
 }
 
 impl LoadBalancer {
-    pub fn new(backend_addrs: Vec<String>, connection_limit: Option<usize>) -> Self {
-        let backends: Vec<Arc<Backend>> = backend_addrs.into_iter().map(|addr| Arc::new(Backend {
-            addr,
-            active_connections: Arc::new(AtomicUsize::new(0)),
-            healthy: Arc::new(AtomicBool::new(true)), // Optimistic init
-        })).collect();
+    pub fn new(rule_name: String, backend_addrs: Vec<String>, connection_limit: Option<usize>) -> Self {
+        let backends: Vec<Arc<Backend>> = backend_addrs.into_iter().map(|addr| {
+            // Init Metric
+            crate::metrics::BACKEND_HEALTH_STATUS.with_label_values(&[&rule_name, &addr]).set(1.0);
+            crate::metrics::BACKEND_ACTIVE_CONNECTIONS.with_label_values(&[&rule_name, &addr]).set(0.0);
+            
+            Arc::new(Backend {
+                rule_name: rule_name.clone(),
+                addr,
+                active_connections: Arc::new(AtomicUsize::new(0)),
+                healthy: Arc::new(AtomicBool::new(true)), // Optimistic init
+            })
+        }).collect();
 
         LoadBalancer {
+            rule_name,
             backends: Arc::new(ArcSwap::from_pointee(backends)),
             current: Arc::new(AtomicUsize::new(0)),
             connection_limit,
@@ -43,7 +53,12 @@ impl LoadBalancer {
              if let Some(existing) = current_backends.iter().find(|b| b.addr == addr) {
                  existing.clone()
              } else {
+                 // Init Metric for new backend
+                 crate::metrics::BACKEND_HEALTH_STATUS.with_label_values(&[&self.rule_name, &addr]).set(1.0);
+                 crate::metrics::BACKEND_ACTIVE_CONNECTIONS.with_label_values(&[&self.rule_name, &addr]).set(0.0);
+                 
                  Arc::new(Backend {
+                    rule_name: self.rule_name.clone(),
                     addr,
                     active_connections: Arc::new(AtomicUsize::new(0)),
                     healthy: Arc::new(AtomicBool::new(true)),
@@ -56,6 +71,9 @@ impl LoadBalancer {
     
     // Used by Health Checker
     pub async fn set_backend_health(&self, backend_addr: &str, healthy: bool) {
+        // Update Metric
+        crate::metrics::BACKEND_HEALTH_STATUS.with_label_values(&[&self.rule_name, backend_addr]).set(if healthy { 1.0 } else { 0.0 });
+
         // We can just iterate the current snapshot. Since backends are Arc, 
         // updating atomic bool is visible to everyone.
         let backends = self.backends.load();
@@ -67,6 +85,8 @@ impl LoadBalancer {
                 } else {
                     warn!("Backend {} marked UNHEALTHY", backend_addr);
                 }
+            } else {
+                log::debug!("Health check update for {}: no change (healthy={})", backend_addr, healthy);
             }
         }
     }
@@ -75,6 +95,7 @@ impl LoadBalancer {
         // Wait-free read!
         let backends = self.backends.load();
         if backends.is_empty() {
+            log::debug!("No backends configured");
             return None;
         }
 
@@ -86,21 +107,30 @@ impl LoadBalancer {
             let backend = &backends[idx];
 
             if !backend.healthy.load(Ordering::Relaxed) {
+                log::debug!("Backend {} skipped (unhealthy)", backend.addr);
                 continue; // Skip unhealthy backends
             }
 
             if let Some(limit) = self.connection_limit {
                 let current_conns = backend.active_connections.load(Ordering::Relaxed);
                 if current_conns >= limit {
+                    log::debug!("Backend {} skipped (connection limit reached: {}/{})", backend.addr, current_conns, limit);
                     continue; // Backend full, try next
                 }
             }
 
             // Increment active connections
             backend.active_connections.fetch_add(1, Ordering::Relaxed);
+            
+            // Metric Increment
+            crate::metrics::BACKEND_ACTIVE_CONNECTIONS.with_label_values(&[&backend.rule_name, &backend.addr]).inc();
+
+            log::debug!("Selected backend: {} (active: {})", backend.addr, backend.active_connections.load(Ordering::Relaxed));
             return Some((
                 backend.addr.clone(),
                 ConnectionGuard {
+                    rule_name: backend.rule_name.clone(), // Added
+                    backend_addr: backend.addr.clone(),   // Added
                     counter: backend.active_connections.clone(),
                 }
             ));
@@ -112,11 +142,15 @@ impl LoadBalancer {
 }
 
 pub struct ConnectionGuard {
+    rule_name: String,
+    backend_addr: String,
     counter: Arc<AtomicUsize>,
 }
 
 impl Drop for ConnectionGuard {
     fn drop(&mut self) {
         self.counter.fetch_sub(1, Ordering::Relaxed);
+        // Metric Decrement
+        crate::metrics::BACKEND_ACTIVE_CONNECTIONS.with_label_values(&[&self.rule_name, &self.backend_addr]).dec();
     }
 }

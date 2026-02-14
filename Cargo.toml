@@ -14,6 +14,11 @@ env_logger = "0.11.9"
 foca = { version = "1.0.0", features = ["bincode-codec", "serde"] }
 futures = "0.3.31"
 governor = "0.10.4"
+lazy_static = "1.4"
+prometheus = "0.13"
+hyper = { version = "1", features = ["full"] }
+http-body-util = "0.1"
+hyper-util = { version = "0.1", features = ["full"] }
 log = "0.4.29"
 nonzero_ext = "0.3.0"
 notify = "8.2.0"
@@ -32,6 +37,14 @@ webpki-roots = "1.0.6"
 name = "layer4-lb"
 path = "src/main.rs"
 
+
 [[bin]]
 name = "throughput"
 path = "utilities/throughput.rs"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

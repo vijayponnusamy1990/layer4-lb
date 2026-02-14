@@ -36,15 +36,19 @@ pub fn start_health_check(
 }
 
 async fn check_tcp(addr: &str, timeout: Duration) -> bool {
+    let start = std::time::Instant::now();
     let connect = TcpStream::connect(addr);
     match tokio::time::timeout(timeout, connect).await {
-        Ok(Ok(_)) => true,
+        Ok(Ok(_)) => {
+            debug!("TCP check passed for {} in {:?}", addr, start.elapsed());
+            true
+        },
         Ok(Err(e)) => {
-            debug!("TCP check failed for {}: {}", addr, e);
+            debug!("TCP check failed for {}: {} (took {:?})", addr, e, start.elapsed());
             false
         },
         Err(_) => {
-            debug!("TCP check timed out for {}", addr);
+            debug!("TCP check timed out for {} (after {:?})", addr, start.elapsed());
             false
         }
     }

@@ -7,14 +7,10 @@ spec:
     app: layer4-lb
   type: LoadBalancer # Or NodePort / ClusterIP
   ports:
-    - name: app-traffic
+    - name: redis-traffic
       protocol: TCP
-      port: 80 # External port
-      targetPort: 8080 # Internal LB port
-    - name: admin-traffic
-      protocol: TCP
-      port: 8082 # External port
-      targetPort: 8082 # Internal LB port
+      port: 6379 # External port
+      targetPort: 6379 # Internal LB port
     # - name: cluster-gossip
     #   protocol: UDP
     #   port: 9090

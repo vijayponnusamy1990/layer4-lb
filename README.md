@@ -43,6 +43,8 @@ A high-performance, multi-threaded Layer 4 (TCP) Load Balancer written in Rust. 
 
     The binary will be located at `target/release/layer4-lb`.
 
+    > **Note:** For optimal performance, please refer to the [Production Tuning Guide](docs/production_tuning.md).
+
 ## Quick Start Scenarios
 
 ### 1. Simple Load Balancer

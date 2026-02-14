@@ -16,6 +16,14 @@ pub struct Config {
     
     // Cluster Configuration (Optional)
     pub cluster: Option<ClusterConfig>,
+    
+    // Logging Configuration (Optional)
+    pub log: Option<LogConfig>,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+pub struct LogConfig {
+    pub level: String,
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
