@@ -1,0 +1,92 @@
+# Layer 4 Load Balancer: Full Featured Kafka Configuration
+
+# This configuration demonstrates:
+# 1. Connection Draining: One broker is draining (e.g. for rolling restart).
+# 2. Proxy Protocol: Preserving client IP information.
+#    Note: Standard Kafka listeners may require a plugin or proxy like HAProxy in front 
+#    to parse Proxy Protocol headers, or use `sasl.mechanism.inter.broker.protocol` if applicable.
+# 3. IP ACLs: Allowing specific producer/consumer subnets.
+# 4. Rate Limiting: Protecting brokers from connection storms.
+# 5. Bandwidth Limiting: Controlling throughput for specific clients.
+# 6. Health Checks: Checking broker reachability.
+
+rules:
+  - name: "Kafka-Production"
+    listen: "0.0.0.0:9092"  # Standard Kafka Client Port
+    protocol: "tcp"
+    
+    # -----------------------------------------------------
+    # Backend Configuration & Connection Draining
+    # -----------------------------------------------------
+    backends:
+      # Active Broker 1
+      - "10.0.1.10:9092"
+
+      # Active Broker 2
+      - "10.0.1.11:9092"
+
+      # Draining Broker 3 (Maintenance Mode)
+      # Existing consumer/producer connections persist, new ones skipped.
+      - addr: "10.0.1.12:9092"
+        drain: true
+
+    # -----------------------------------------------------
+    # Proxy Protocol V2
+    # -----------------------------------------------------
+    # Important: Ensure your Kafka brokers are configured to accept 
+    # proxy protocol headers on this listener, otherwise connections will fail.
+    proxy_protocol: true
+
+    # -----------------------------------------------------
+    # IP Access Control Lists (ACLs)
+    # -----------------------------------------------------
+    allow_list:
+      - "10.0.0.0/8"        # Internal VPC
+      - "172.16.0.0/12"     # QA Environment
+      - "192.168.1.50/32"   # Specific Analytics Job
+
+    deny_list:
+      - "10.5.5.5/32"       # Rogue Client
+
+    # -----------------------------------------------------
+    # Health Checks
+    # -----------------------------------------------------
+    health_check:
+      enabled: true
+      protocol: "tcp"
+      interval_ms: 5000     # Check every 5 seconds (Kafka is robust)
+      timeout_ms: 2000      # Timeout after 2 seconds
+      # Note: TCP checks only verify port is open, not cluster metadata.
+
+    # -----------------------------------------------------
+    # Security Features (Optional)
+    # -----------------------------------------------------
+    # TLS Termination (Uncomment if certs exist)
+    # tls:
+    #   enabled: true
+    #   cert: "certs/kafka-bundle.crt"
+    #   key: "certs/kafka.key"
+    
+    # -----------------------------------------------------
+    # Traffic Control
+    # -----------------------------------------------------
+    # Connection Rate Limiting
+    rate_limit:
+      enabled: true
+      requests_per_second: 1000  # Allow bursty connection attempts
+      burst: 50
+
+    # Max Concurrent Connections per Broker
+    # Kafka handles many connections, but limits help stability.
+    backend_connection_limit: 5000
+
+    # Bandwidth Limiting
+    # prevent a single client from saturating the link
+    bandwidth_limit:
+      enabled: true
+      client:
+        upload_per_sec: 104857600   # 100 MB/s (Producers)
+        download_per_sec: 104857600 # 100 MB/s (Consumers)
+      backend:
+        upload_per_sec: 104857600
+        download_per_sec: 104857600

@@ -1,0 +1,92 @@
+# Layer 4 Load Balancer: Full Featured MySQL Configuration
+
+# This configuration demonstrates:
+# 1. Connection Draining: Taking a read-replica out of rotation.
+# 2. Proxy Protocol: Preserving client IP (MySQL 8.0.14+ supports this).
+#    Note: Must enable `proxy_protocol_networks` in MySQL config.
+# 3. IP ACLs: Strict access control for database security.
+# 4. Rate Limiting: mitigating brute-force attacks.
+# 5. Bandwidth Limiting: Controlling large query dumps.
+# 6. Health Checks: Monitoring database availability.
+
+rules:
+  - name: "MySQL-Cluster"
+    listen: "0.0.0.0:3306"  # Standard MySQL Port
+    protocol: "tcp"
+    
+    # -----------------------------------------------------
+    # Backend Configuration & Connection Draining
+    # -----------------------------------------------------
+    backends:
+      # Primary (Master) - Not in this load balancing group usually, 
+      # but assuming a multi-master or read-heavy cluster:
+      
+      # Active Read Replica 1
+      - "10.0.2.10:3306"
+
+      # Active Read Replica 2
+      - "10.0.2.11:3306"
+
+      # Draining Replica 3 (Maintenance/Upgrade)
+      # Existing long-running queries persist, new connections routed elsewhere.
+      - addr: "10.0.2.12:3306"
+        drain: true
+
+    # -----------------------------------------------------
+    # Proxy Protocol V2
+    # -----------------------------------------------------
+    # Forward client IP to MySQL.
+    # Requires `proxy_protocol_networks` set in my.cnf to trust the LB IP.
+    proxy_protocol: true
+
+    # -----------------------------------------------------
+    # IP Access Control Lists (ACLs)
+    # -----------------------------------------------------
+    allow_list:
+      - "10.0.0.0/8"        # App Servers VPC
+      - "192.168.10.5/32"   # Bastion Host / Jump Box
+
+    deny_list:
+      - "0.0.0.0/0"         # Implicitly deny all public internet (Safety net)
+
+    # -----------------------------------------------------
+    # Health Checks
+    # -----------------------------------------------------
+    health_check:
+      enabled: true
+      protocol: "tcp"
+      interval_ms: 3000     # Check every 3 seconds
+      timeout_ms: 1000      # Timeout after 1 second
+      
+    # -----------------------------------------------------
+    # Security Features (Optional)
+    # -----------------------------------------------------
+    # TLS Passthrough is common for DBs, but if terminating here:
+    # tls:
+    #   enabled: true
+    #   cert: "certs/mysql-lb.crt"
+    #   key: "certs/mysql-lb.key"
+    
+    # -----------------------------------------------------
+    # Traffic Control
+    # -----------------------------------------------------
+    # Connection Rate Limiting
+    # Helps prevent brute-force password guessing
+    rate_limit:
+      enabled: true
+      requests_per_second: 50
+      burst: 10
+
+    # Max Concurrent Connections per DB Node
+    backend_connection_limit: 500
+
+    # Bandwidth Limiting
+    # Prevent a single large `mysqldump` from saturating the network.
+    bandwidth_limit:
+      enabled: true
+      client:
+        upload_per_sec: 10485760   # 10 MB/s (Upload/Inserts)
+        download_per_sec: 20971520 # 20 MB/s (Download/Selects)
+      backend:
+         upload_per_sec: 10485760
+         download_per_sec: 20971520

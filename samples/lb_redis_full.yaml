@@ -1,0 +1,86 @@
+# Layer 4 Load Balancer: Full Featured Redis Configuration
+
+# This configuration demonstrates:
+# 1. Connection Draining: One backend is draining, another active.
+# 2. Proxy Protocol: Preserving client IP information.
+# 3. IP ACLs: Allowing internal networks, denying specific IPs.
+# 4. Rate Limiting: Protecting against floods.
+# 5. Bandwidth Limiting: Controlling throughput.
+# 6. Health Checks: Identifying failed nodes.
+# 7. TLS Termination: Secure frontend (Optional).
+
+rules:
+  - name: "Redis-Production"
+    listen: "0.0.0.0:6379"
+    protocol: "tcp"
+    
+    # -----------------------------------------------------
+    # Backend Configuration & Connection Draining
+    # -----------------------------------------------------
+    backends:
+      # Active Backend
+      - "127.0.0.1:6380"
+
+      # Draining Backend
+      - addr: "127.0.0.1:6381"
+        drain: true
+      
+      # Another Active Backend
+      - addr: "127.0.0.1:6382"
+        drain: false
+
+    # -----------------------------------------------------
+    # Proxy Protocol V2
+    # -----------------------------------------------------
+    proxy_protocol: true
+
+    # -----------------------------------------------------
+    # IP Access Control Lists (ACLs)
+    # -----------------------------------------------------
+    allow_list:
+      - "10.0.0.0/8"
+      - "192.168.1.0/24"
+      - "127.0.0.1/32"
+
+    deny_list:
+      - "10.1.2.3/32"
+
+    # -----------------------------------------------------
+    # Health Checks
+    # -----------------------------------------------------
+    health_check:
+      enabled: true
+      protocol: "tcp"
+      interval_ms: 2000
+      timeout_ms: 1000
+      # Note: Thresholds are currently hardcoded or not configurable in this version.
+
+    # -----------------------------------------------------
+    # Security Features (Optional)
+    # -----------------------------------------------------
+    # tls:
+    #   enabled: true
+    #   cert: "certs/server.crt"
+    #   key: "certs/server.key"
+    
+    # -----------------------------------------------------
+    # Traffic Control
+    # -----------------------------------------------------
+    # Connection Rate Limiting
+    rate_limit:
+      enabled: true
+      requests_per_second: 5000
+      burst: 100
+
+    # Max Concurrent Connections per Backend
+    backend_connection_limit: 1000
+
+    # Bandwidth Limiting
+    bandwidth_limit:
+      enabled: true
+      client:
+        upload_per_sec: 52428800   # 50 MB/s
+        download_per_sec: 52428800
+      backend:
+        upload_per_sec: 52428800
+        download_per_sec: 52428800
