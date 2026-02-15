@@ -171,7 +171,7 @@ cluster:
 For testing different TLS modes, use the provided test config:
 
 ```bash
-cargo run --release -- --config lb_tls_test.yaml
+cargo run --release -- --config samples/lb_tls_test.yaml
 ```
 
 ## Utilities
