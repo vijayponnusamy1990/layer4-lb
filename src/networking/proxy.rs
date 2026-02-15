@@ -78,7 +78,7 @@ where
              let mut backend_stream_limited = RateLimitedStream::new(tls_stream, config.backend_read_limiter, config.backend_write_limiter);
              let mut client_stream_limited = RateLimitedStream::new(client_stream, config.client_read_limiter, config.client_write_limiter);
 
-             let (c2b, b2c) = crate::common::io::copy_bidirectional_with_buffer(&mut client_stream_limited, &mut backend_stream_limited, 16 * 1024).await?;
+             let (c2b, b2c) = tokio::io::copy_bidirectional(&mut client_stream_limited, &mut backend_stream_limited).await?;
 
              // Record Traffic & Duration
              crate::metrics::TRAFFIC_BYTES.with_label_values(&[&rule_name, "client_in"]).inc_by(c2b);
@@ -96,7 +96,7 @@ where
     let mut backend_stream_limited = RateLimitedStream::new(backend_stream, config.backend_read_limiter, config.backend_write_limiter);
     let mut client_stream_limited = RateLimitedStream::new(client_stream, config.client_read_limiter, config.client_write_limiter);
 
-    let (c2b, b2c) = crate::common::io::copy_bidirectional_with_buffer(&mut client_stream_limited, &mut backend_stream_limited, 16 * 1024).await?;
+    let (c2b, b2c) = tokio::io::copy_bidirectional(&mut client_stream_limited, &mut backend_stream_limited).await?;
     
     // Record Traffic & Duration
     crate::metrics::TRAFFIC_BYTES.with_label_values(&[&rule_name, "client_in"]).inc_by(c2b);

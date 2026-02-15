@@ -184,7 +184,7 @@ async fn main() -> anyhow::Result<()> {
                                 let backend = match lb.next_backend() {
                                     Some(b) => b,
                                     None => {
-                                        // error!("[{}] No available backends", r_name);
+                                        error!("[{}] No available backends", r_name);
                                         return;
                                     }
                                 };
@@ -209,8 +209,8 @@ async fn main() -> anyhow::Result<()> {
                                         Err(e) => error!("[{}] TLS handshake error: {}", r_name, e),
                                     }
                                 } else {
-                                    if let Err(_e) = proxy::proxy_connection(stream, backend_addr, proxy_config, r_name.clone()).await {
-                                        // error!("[{}] Proxy error: {}", r_name, e);
+                                    if let Err(e) = proxy::proxy_connection(stream, backend_addr, proxy_config, r_name.clone()).await {
+                                        error!("[{}] Proxy error: {}", r_name, e);
                                     }
                                 }
                             });

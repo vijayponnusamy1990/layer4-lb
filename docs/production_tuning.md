@@ -104,7 +104,19 @@ Increase the ring buffer size:
 ethtool -G eth0 rx 4096 tx 4096
 ```
 
-## 5. Deployment Checklist
+## 5. Application Tuning
+
+### Threading Model (`NUM_ACCEPTORS`)
+
+By default, the load balancer spawns one acceptor thread per available CPU core. In widely non-uniform memory access (NUMA) systems or when running alongside other services, you might want to manually control this.
+
+```bash
+# Set specific number of acceptor threads
+export NUM_ACCEPTORS=8
+./layer4-lb --config lb.yaml
+```
+
+## 6. Deployment Checklist
 
 - [ ] Built with `--release`?
 - [ ] `ulimit -n` > 100k?
