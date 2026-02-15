@@ -17,6 +17,7 @@ governor = "0.10.4"
 lazy_static = "1.4"
 prometheus = "0.13"
 hyper = { version = "1", features = ["full"] }
+ipnet = "2.10"
 http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["full"] }
 log = "0.4.29"

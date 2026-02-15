@@ -9,9 +9,9 @@ rules:
     backend_connection_limit: 10000
     
     rate_limit:
-      enabled: false
-      requests_per_second: 0
-      burst: 0
+      enabled: true
+      requests_per_second: 10
+      burst: 10
     bandwidth_limit:
       enabled: false
       client:

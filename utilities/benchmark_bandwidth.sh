@@ -39,8 +39,8 @@ memtier_benchmark \
     --port=8080 \
     --data-size=1048576 \
     --test-time=10 \
-    --clients=1 \
-    --threads=1 \
+    --clients=10 \
+    --threads=10 \
     --hide-histogram || true
 
 # Cleanup

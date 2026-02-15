@@ -767,6 +767,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "ipnet",
  "lazy_static",
  "log",
  "nonzero_ext",

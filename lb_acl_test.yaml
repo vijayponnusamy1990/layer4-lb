@@ -1,0 +1,21 @@
+rules:
+  - name: "AllowLocal"
+    listen: "0.0.0.0:9100"
+    backends: ["127.0.0.1:9098"]
+    allow_list: ["127.0.0.1/32"]
+
+  - name: "DenyLocal"
+    listen: "0.0.0.0:9101"
+    backends: ["127.0.0.1:9098"]
+    deny_list: ["127.0.0.1"]
+
+  - name: "AllowOther"
+    listen: "0.0.0.0:9102"
+    backends: ["127.0.0.1:9098"]
+    allow_list: ["192.168.0.0/16"]
+
+  - name: "MixedRule"
+    listen: "0.0.0.0:9103"
+    backends: ["127.0.0.1:9098"]
+    allow_list: ["127.0.0.0/8"]
+    deny_list: ["127.0.0.5"]

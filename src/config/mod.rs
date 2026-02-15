@@ -34,19 +34,40 @@ pub struct ClusterConfig {
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
+#[serde(untagged)]
+pub enum BackendConfig {
+    Simple(String),
+    Detailed {
+        addr: String,
+        #[serde(default = "default_drain")]
+        drain: bool,
+    }
+}
+
+fn default_drain() -> bool {
+    false
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq)]
 pub struct LBRule {
     pub name: String,
     pub listen: String, // e.g., "0.0.0.0:8080"
-    pub backends: Vec<String>,
+    pub backends: Vec<BackendConfig>,
     pub protocol: Option<String>, // Default TCP
     
     // Per-rule configurations
+    #[serde(default)]
+    pub proxy_protocol: bool, // Enable Proxy Protocol V2
+
     pub tls: Option<TlsConfig>,
     pub backend_tls: Option<BackendTlsConfig>,
     pub rate_limit: Option<RateLimitConfig>,
     pub bandwidth_limit: Option<BandwidthLimitConfig>,
     pub backend_connection_limit: Option<usize>,
     pub health_check: Option<HealthCheckConfig>,
+
+    pub allow_list: Option<Vec<String>>,
+    pub deny_list: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]

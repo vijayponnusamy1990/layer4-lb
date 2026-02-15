@@ -1,4 +1,4 @@
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use log::debug;
 use std::sync::Arc;
@@ -10,6 +10,7 @@ use tokio_rustls::TlsConnector;
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, RootCertStore};
 use webpki_roots;
+use std::net::SocketAddr;
 
 pub struct ProxyConfig {
     pub client_read_limiter: Option<Arc<RateLimiterType>>,
@@ -17,6 +18,9 @@ pub struct ProxyConfig {
     pub backend_read_limiter: Option<Arc<RateLimiterType>>,
     pub backend_write_limiter: Option<Arc<RateLimiterType>>,
     pub backend_tls: Option<BackendTlsConfig>,
+    pub proxy_protocol: bool,
+    pub client_addr: SocketAddr,
+    pub local_addr: SocketAddr,
 }
 
 pub async fn proxy_connection<I>(
@@ -48,9 +52,16 @@ where
     let _metric_guard = ConnectionMetricGuard { rule_name: rule_name.clone() };
 
     // Connect to backend (TCP)
-    let backend_stream = TcpStream::connect(&backend_addr).await?;
+    let mut backend_stream = TcpStream::connect(&backend_addr).await?;
     if let Err(e) = backend_stream.set_nodelay(true) {
         debug!("Failed to set nodelay on backend stream: {}", e);
+    }
+
+    // Send Proxy Protocol Header if enabled
+    if config.proxy_protocol {
+        let header = crate::networking::proxy_protocol::create_v2_header(config.client_addr, config.local_addr);
+        backend_stream.write_all(&header).await?;
+        debug!("Sent Proxy Protocol v2 header to {}", backend_addr);
     }
     
     // ... TLS handling logic ... (simplified for brevity match structure in original)

@@ -1,0 +1,6 @@
+rules:
+  - name: "ProxyProtocolTest"
+    listen: "0.0.0.0:9095"
+    backends:
+      - "127.0.0.1:9096"
+    proxy_protocol: true

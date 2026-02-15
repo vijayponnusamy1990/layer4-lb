@@ -63,8 +63,12 @@ async fn main() -> anyhow::Result<()> {
         // Spawn Health Checkers
         if let Some(hc_config) = &rule.health_check {
             info!("Spawning health checkers for rule '{}'", rule.name);
-            for backend_addr in &rule.backends {
-                health::start_health_check(lb.clone(), backend_addr.clone(), hc_config.clone());
+            for backend_config in &rule.backends {
+                let backend_addr = match backend_config {
+                     crate::config::BackendConfig::Simple(a) => a.clone(),
+                     crate::config::BackendConfig::Detailed { addr, .. } => addr.clone(),
+                };
+                health::start_health_check(lb.clone(), backend_addr, hc_config.clone());
             }
         }
 
@@ -160,6 +164,10 @@ async fn main() -> anyhow::Result<()> {
             let r_name_clone = rule_name.clone();
             let tls_clone = tls_acceptor.clone(); // tokio_rustls::TlsAcceptor is cheap to clone
             let backend_tls_clone = backend_tls_config.clone();
+            let rule_proxy_protocol = rule.proxy_protocol;
+            
+            // Initialize ACL
+            let acl = Arc::new(crate::networking::acl::AccessControl::new(rule.allow_list.clone(), rule.deny_list.clone()));
 
             tokio::spawn(async move {
                 loop {
@@ -167,6 +175,12 @@ async fn main() -> anyhow::Result<()> {
                         Ok((stream, client_addr)) => {
                             if let Err(e) = stream.set_nodelay(true) {
                                 warn!("Failed to set nodelay on client stream: {}", e);
+                            }
+                            
+                            // ACL Check
+                            if !acl.is_allowed(client_addr.ip()) {
+                                warn!("Connection from {} denied by ACL", client_addr);
+                                continue; // Drop connection silently (or we could close explicitly)
                             }
                             
                             // Rate Limit
@@ -193,12 +207,16 @@ async fn main() -> anyhow::Result<()> {
                                 let (backend_addr, _guard) = backend;
 
                                 // Bandwidth Limiters
+                                let local_addr = stream.local_addr().unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap());
                                 let proxy_config = ProxyConfig {
                                     client_read_limiter: bw.get_client_upload_limiter(client_addr.ip()),
                                     client_write_limiter: bw.get_client_download_limiter(client_addr.ip()),
                                     backend_read_limiter: bw.get_backend_download_limiter(client_addr.ip().to_string()), 
                                     backend_write_limiter: bw.get_backend_upload_limiter(client_addr.ip().to_string()),
                                     backend_tls: b_tls,
+                                    proxy_protocol: rule_proxy_protocol,
+                                    client_addr,
+                                    local_addr,
                                 };
 
                                 if let Some(acceptor) = tls {
@@ -326,8 +344,12 @@ async fn main() -> anyhow::Result<()> {
                                 
                                 // Spawn health checks for new backends (NOTE: this duplicates checkers for existing backends)
                                 if let Some(hc_config) = &rule.health_check {
-                                     for backend_addr in &rule.backends {
-                                         health::start_health_check(lb.clone(), backend_addr.clone(), hc_config.clone());
+                                     for backend_config in &rule.backends {
+                                         let backend_addr = match backend_config {
+                                             crate::config::BackendConfig::Simple(a) => a.clone(),
+                                             crate::config::BackendConfig::Detailed { addr, .. } => addr.clone(),
+                                         };
+                                         health::start_health_check(lb.clone(), backend_addr, hc_config.clone());
                                      }
                                 }
                             } else {

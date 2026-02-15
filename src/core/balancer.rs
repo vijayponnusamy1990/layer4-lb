@@ -17,11 +17,17 @@ pub struct Backend {
     pub addr: String,
     pub active_connections: Arc<AtomicUsize>,
     pub healthy: Arc<AtomicBool>,
+    pub drain: Arc<AtomicBool>, // Configured state (true = draining, false = accept traffic)
 }
 
 impl LoadBalancer {
-    pub fn new(rule_name: String, backend_addrs: Vec<String>, connection_limit: Option<usize>) -> Self {
-        let backends: Vec<Arc<Backend>> = backend_addrs.into_iter().map(|addr| {
+    pub fn new(rule_name: String, backend_configs: Vec<crate::config::BackendConfig>, connection_limit: Option<usize>) -> Self {
+        let backends: Vec<Arc<Backend>> = backend_configs.into_iter().map(|config| {
+            let (addr, drain) = match config {
+                crate::config::BackendConfig::Simple(a) => (a, false),
+                crate::config::BackendConfig::Detailed { addr, drain } => (addr, drain),
+            };
+
             // Init Metric
             crate::metrics::BACKEND_HEALTH_STATUS.with_label_values(&[&rule_name, &addr]).set(1.0);
             crate::metrics::BACKEND_ACTIVE_CONNECTIONS.with_label_values(&[&rule_name, &addr]).set(0.0);
@@ -31,6 +37,7 @@ impl LoadBalancer {
                 addr,
                 active_connections: Arc::new(AtomicUsize::new(0)),
                 healthy: Arc::new(AtomicBool::new(true)), // Optimistic init
+                drain: Arc::new(AtomicBool::new(drain)),
             })
         }).collect();
 
@@ -42,15 +49,22 @@ impl LoadBalancer {
         }
     }
 
-    pub async fn update_backends(&self, new_backend_addrs: Vec<String>) {
+    pub async fn update_backends(&self, new_backend_configs: Vec<crate::config::BackendConfig>) {
         // Construct new backend list
         // Optimization: preserve active connection counters for existing backends if possible
         // We need to read the current backends to match addresses
         let current_backends = self.backends.load();
         
-        let new_backends: Vec<Arc<Backend>> = new_backend_addrs.into_iter().map(|addr| {
+        let new_backends: Vec<Arc<Backend>> = new_backend_configs.into_iter().map(|config| {
+             let (addr, drain_cfg) = match config {
+                crate::config::BackendConfig::Simple(a) => (a, false),
+                crate::config::BackendConfig::Detailed { addr, drain } => (addr, drain),
+            };
+
              // Try to find existing backend state
              if let Some(existing) = current_backends.iter().find(|b| b.addr == addr) {
+                 // Update drain state if changed
+                 existing.drain.store(drain_cfg, Ordering::Relaxed);
                  existing.clone()
              } else {
                  // Init Metric for new backend
@@ -62,6 +76,7 @@ impl LoadBalancer {
                     addr,
                     active_connections: Arc::new(AtomicUsize::new(0)),
                     healthy: Arc::new(AtomicBool::new(true)),
+                    drain: Arc::new(AtomicBool::new(drain_cfg)),
                  })
              }
         }).collect();
@@ -106,6 +121,12 @@ impl LoadBalancer {
             let idx = (start_index + i) % len;
             let backend = &backends[idx];
 
+            // Check if backend is manually disabled (draining)
+            if backend.drain.load(Ordering::Relaxed) {
+                log::debug!("Backend {} skipped (draining)", backend.addr);
+                continue;
+            }
+
             if !backend.healthy.load(Ordering::Relaxed) {
                 log::debug!("Backend {} skipped (unhealthy)", backend.addr);
                 continue; // Skip unhealthy backends
@@ -136,7 +157,7 @@ impl LoadBalancer {
             ));
         }
 
-        warn!("All backends are at capacity or unhealthy");
+        warn!("All backends are at capacity, unhealthy, or draining");
         None
     }
 }
