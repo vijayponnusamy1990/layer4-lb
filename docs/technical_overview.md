@@ -72,7 +72,7 @@ bandwidth_limit:
 **Limitations**:
 
 - **CPU Overhead**: High bandwidth limits (1Gbps+) may incur CPU cost due to frequent token checks.
-- **Bursts**: Short bursts are allowed by design; strictly constant bit rate (CBR) is not enforced.
+- **Smooth Throttling**: Uses a 64KB burst buffer and 1ms timer resolution to ensure smooth traffic shaping (not strictly CBR bit-perfect, but statistically accurate).
 
 ### 4. TLS Termination & Re-Encryption
 

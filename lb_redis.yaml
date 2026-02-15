@@ -8,8 +8,15 @@ rules:
       - "127.0.0.1:6379"
     backend_connection_limit: 10000
     
-rate_limit:
-  enabled: false
-
-bandwidth_limit:
-  enabled: false
+    rate_limit:
+      enabled: false
+      requests_per_second: 0
+      burst: 0
+    bandwidth_limit:
+      enabled: false
+      client:
+        upload_per_sec: 5242880 # 5 MB/s
+        download_per_sec: 5242880 # 5 MB/s
+      backend:
+        upload_per_sec: 5242880 # 5 MB/s
+        download_per_sec: 5242880 # 5 MB/s

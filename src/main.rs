@@ -68,6 +68,8 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
+        info!("Rule '{}' Bandwidth Config: {:?}", rule.name, rule.bandwidth_limit);
+
         let rate_limiter = Arc::new(RateLimiter::new(rule.rate_limit.clone().unwrap_or(RateLimitConfig {
             enabled: false,
             requests_per_second: 0,

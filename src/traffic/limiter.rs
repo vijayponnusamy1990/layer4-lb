@@ -1,20 +1,90 @@
-use governor::{Quota, RateLimiter as GovernorLimiter};
-use governor::state::{InMemoryState, NotKeyed};
-use governor::clock::DefaultClock;
-use std::num::NonZeroU32;
+// Custom Simple Limiter to debug Governor issues
+use std::sync::Mutex;
+use std::time::{Instant, Duration};
+use tokio::time::sleep;
+use std::sync::Arc;
 use dashmap::DashMap;
 use std::net::IpAddr;
-use std::sync::Arc;
 use crate::config::RateLimitConfig;
 use crate::config::BandwidthLimitConfig;
-use log::warn;
 
-// Make this public so bandwidth.rs can see it
-pub type RateLimiterType = GovernorLimiter<NotKeyed, InMemoryState, DefaultClock>;
+#[derive(Debug)]
+pub struct SimpleLimiter {
+    rate_per_sec: u32,
+    burst_size: u32,
+    state: Mutex<SimpleLimiterState>,
+}
+
+#[derive(Debug)]
+struct SimpleLimiterState {
+    tokens: f64,
+    last_update: Instant,
+}
+
+impl SimpleLimiter {
+    pub fn new(rate_per_sec: u32, burst_size: u32) -> Self {
+        SimpleLimiter {
+            rate_per_sec,
+            burst_size,
+            state: Mutex::new(SimpleLimiterState {
+                tokens: burst_size as f64,
+                last_update: Instant::now(),
+            }),
+        }
+    }
+
+    // Returns Ok if tokens consumed, Err if not enough
+    pub fn check_n(&self, n: u32) -> Result<(), ()> {
+        let mut state = self.state.lock().unwrap();
+        self.refill(&mut state);
+
+        if state.tokens >= n as f64 {
+            state.tokens -= n as f64;
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    // Async wait for tokens
+    pub async fn until_n_ready(&self, n: u32) -> Result<(), ()> {
+        loop {
+            let wait_duration = {
+                let mut state = self.state.lock().unwrap();
+                self.refill(&mut state);
+                if state.tokens >= n as f64 {
+                    state.tokens -= n as f64;
+                    return Ok(());
+                }
+                
+                // Calculate time needed to get enough tokens
+                let missing = (n as f64) - state.tokens;
+                let seconds_needed = missing / (self.rate_per_sec as f64);
+                Duration::from_secs_f64(seconds_needed)
+            };
+
+            // Sleep for the calculated duration (plus a tiny buffer to be safe?)
+            // We just sleep and retry.
+            sleep(wait_duration).await;
+        }
+    }
+
+    fn refill(&self, state: &mut SimpleLimiterState) {
+        let now = Instant::now();
+        let elapsed = now.duration_since(state.last_update).as_secs_f64();
+        let new_tokens = elapsed * self.rate_per_sec as f64;
+        
+        if new_tokens > 0.0 {
+            state.tokens = (state.tokens + new_tokens).min(self.burst_size as f64);
+            state.last_update = now;
+        }
+    }
+}
+
+pub type RateLimiterType = SimpleLimiter;
 
 #[derive(Clone)]
 pub struct RateLimiter {
-    // Map IP address to a rate limiter instance
     limiters: Arc<DashMap<IpAddr, Arc<RateLimiterType>>>,
     config: RateLimitConfig,
 }
@@ -31,37 +101,24 @@ impl RateLimiter {
         if !self.config.enabled {
             return true;
         }
-
-        // Get or create limiter for this IP
+        
         let limiter = self.limiters.entry(ip).or_insert_with(|| {
-            let quota = Quota::per_second(NonZeroU32::new(self.config.requests_per_second).unwrap_or(NonZeroU32::new(1).unwrap()))
-                .allow_burst(NonZeroU32::new(self.config.burst).unwrap_or(NonZeroU32::new(1).unwrap()));
-            Arc::new(GovernorLimiter::direct(quota))
+            Arc::new(SimpleLimiter::new(
+                self.config.requests_per_second.max(1),
+                self.config.burst.max(1)
+            ))
         }).value().clone();
 
-        match limiter.check() {
-            Ok(_) => true,
-            Err(_) => {
-                warn!("Rate limit exceeded for IP: {}", ip);
-                false
-            }
-        }
+        limiter.check_n(1).is_ok()
     }
 }
 
-// Reuse GovernorLimiter logic for bandwidth. 1 token = 1 byte.
-// We need separate limiters for upload (read from client/backend) and download (write to client/backend).
 #[derive(Clone)]
 pub struct BandwidthManager {
     config: BandwidthLimitConfig,
-    // Maps for different flows.
-    // Client Upload: Client IP -> Limiter
     client_upload: Arc<DashMap<IpAddr, Arc<RateLimiterType>>>,
-    // Client Download: Client IP -> Limiter
     client_download: Arc<DashMap<IpAddr, Arc<RateLimiterType>>>,
-    // Backend Upload: Backend IP (String for now) -> Limiter
     backend_upload: Arc<DashMap<String, Arc<RateLimiterType>>>,
-    // Backend Download: Backend IP (String for now) -> Limiter
     backend_download: Arc<DashMap<String, Arc<RateLimiterType>>>,
 }
 
@@ -76,54 +133,44 @@ impl BandwidthManager {
         }
     }
 
+    fn get_or_create_limiter<K: std::hash::Hash + Eq + Clone + std::fmt::Display>(
+        map: &Arc<DashMap<K, Arc<RateLimiterType>>>, 
+        key: K, 
+        rate_per_sec: u32,
+        context: &str
+    ) -> Arc<RateLimiterType> {
+        if let Some(limiter) = map.get(&key) {
+            return limiter.clone();
+        }
 
-
-    // Helper to get or create a limiter
-    fn get_limiter(&self, map: &Arc<DashMap<String, Arc<RateLimiterType>>>, key: String, rate_per_sec: u32) -> Arc<RateLimiterType> {
-         map.entry(key.clone()).or_insert_with(|| {
-            // println!("Creating new limiter for {} with rate {}", key, rate_per_sec); // Removed dead code
-            // Burst size matters for smooth streaming. Let's say burst = rate (1 second buffer)
-            let burst = rate_per_sec;
-             let quota = Quota::per_second(NonZeroU32::new(rate_per_sec).unwrap_or(NonZeroU32::new(1024).unwrap()))
-                .allow_burst(NonZeroU32::new(burst).unwrap_or(NonZeroU32::new(1024).unwrap()));
-            Arc::new(GovernorLimiter::direct(quota))
+        map.entry(key.clone()).or_insert_with(|| {
+            let burst = 65536; // 64KB buffer for smooth throttling 
+            log::info!("Creating new SimpleLimiter for {} {} with rate {} B/s", context, key, rate_per_sec);
+            Arc::new(SimpleLimiter::new(rate_per_sec.max(1024), burst))
         }).value().clone()
     }
 
     pub fn get_client_upload_limiter(&self, ip: IpAddr) -> Option<Arc<RateLimiterType>> {
         if !self.config.enabled { return None; }
         let limits = self.config.client.as_ref()?;
-        Some(self.client_upload.entry(ip).or_insert_with(|| {
-             let rate = limits.upload_per_sec;
-             // println!("Creating new Client Upload limiter for {} with rate {}", ip, rate); // reduce log spam
-             let quota = Quota::per_second(NonZeroU32::new(rate).unwrap_or(NonZeroU32::new(1024).unwrap()))
-                .allow_burst(NonZeroU32::new(rate).unwrap_or(NonZeroU32::new(1024).unwrap()));
-            Arc::new(GovernorLimiter::direct(quota))
-        }).value().clone())
+        Some(Self::get_or_create_limiter(&self.client_upload, ip, limits.upload_per_sec, "Client Upload"))
     }
 
     pub fn get_client_download_limiter(&self, ip: IpAddr) -> Option<Arc<RateLimiterType>> {
-        if !self.config.enabled { return None; }
+         if !self.config.enabled { return None; }
         let limits = self.config.client.as_ref()?;
-         Some(self.client_download.entry(ip).or_insert_with(|| {
-             let rate = limits.download_per_sec;
-             let quota = Quota::per_second(NonZeroU32::new(rate).unwrap_or(NonZeroU32::new(1024).unwrap()))
-                .allow_burst(NonZeroU32::new(rate).unwrap_or(NonZeroU32::new(1024).unwrap()));
-            Arc::new(GovernorLimiter::direct(quota))
-        }).value().clone())
+        Some(Self::get_or_create_limiter(&self.client_download, ip, limits.download_per_sec, "Client Download"))
     }
 
     pub fn get_backend_upload_limiter(&self, key: String) -> Option<Arc<RateLimiterType>> {
         if !self.config.enabled { return None; }
         let limits = self.config.backend.as_ref()?;
-        Some(self.get_limiter(&self.backend_upload, key, limits.upload_per_sec))
+        Some(Self::get_or_create_limiter(&self.backend_upload, key, limits.upload_per_sec, "Backend Upload"))
     }
 
     pub fn get_backend_download_limiter(&self, key: String) -> Option<Arc<RateLimiterType>> {
         if !self.config.enabled { return None; }
         let limits = self.config.backend.as_ref()?;
-        Some(self.get_limiter(&self.backend_download, key, limits.download_per_sec))
+        Some(Self::get_or_create_limiter(&self.backend_download, key, limits.download_per_sec, "Backend Download"))
     }
-
-
 }

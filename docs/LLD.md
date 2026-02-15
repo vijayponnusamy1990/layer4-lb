@@ -1,135 +1,184 @@
 # Low Level Design (LLD)
 
-This document details the internal logic and data structures of the core modules.
+This document provides a comprehensive deep-dive into the architecture, data structures, and interaction flows of the Layer 4 Load Balancer.
 
-## 1. Load Balancer (`core/balancer.rs`)
+## 1. High-Level Class Architecture
 
-Responsible for selecting the backend for a new connection.
+The following class diagram illustrates the core components and their relationships. The application relies heavily on `Arc<T>` for shared state across asynchronous Tokio tasks.
 
-### Structs
+```mermaid
+classDiagram
+    class Main {
+        +Config config
+        +LoadBalancers: Map<String, Arc<LoadBalancer>>
+        +Start()
+    }
 
-- `LoadBalancer`:
-  - `backends`: `Arc<ArcSwap<Vec<(String, usize)>>>` (List of healthy backend addresses).
-  - `index`: `AtomicUsize` (Round-robin counter).
+    class LoadBalancer {
+        +String rule_name
+        +backends: Arc<ArcSwap<Vec<Arc<Backend>>>>
+        +current: AtomicUsize
+        +connection_limit: Option<usize>
+        +next_backend() Option<(String, ConnectionGuard)>
+        +update_backends(Vec<String>)
+        +set_backend_health(String, bool)
+    }
 
-### Logic
+    class Backend {
+        +String addr
+        +active_connections: AtomicUsize
+        +healthy: AtomicBool
+    }
 
-- **`next_backend()`**:
-    1. Loads the current list of healthy backends.
-    2. If empty, returns `None`.
-    3. Atomically increments `index` (`fetch_add`).
-    4. Returns `backends[index % length]`.
-  - *Optimization*: Uses `ArcSwap` allows wait-free reads while the Health Checker updates the list in the background.
+    class RateLimiter {
+        +limiters: DashMap<IpAddr, SimpleLimiter>
+        +check(IpAddr) bool
+    }
 
-  - *Optimization*: Uses `ArcSwap` allows wait-free reads while the Health Checker updates the list in the background.
+    class BandwidthManager {
+        +client_upload: DashMap<IpAddr, SimpleLimiter>
+        +client_download: DashMap<IpAddr, SimpleLimiter>
+        +backend_upload: DashMap<String, SimpleLimiter>
+        +backend_download: DashMap<String, SimpleLimiter>
+        +get_limiters()
+    }
 
-## 2. Health Checks (`core/health.rs`)
+    class ProxyConfig {
+        +client_read_limiter
+        +client_write_limiter
+        +backend_read_limiter
+        +backend_write_limiter
+        +backend_tls: Option<BackendTlsConfig>
+    }
 
-Active probing of backend health.
+    Main --> LoadBalancer : Manages
+    Main --> RateLimiter : Initializes
+    Main --> BandwidthManager : Initializes
+    LoadBalancer "1" *-- "many" Backend : Contains
+    Main ..> ProxyConfig : Creates per connection
+```
 
-### Components
+## 2. Request Processing Flow (Sequence Diagram)
 
-- **`ActiveHealthCheck`**: Struct holding configuration (`interval`, `timeout`, `path`).
-- **`start_health_check_loop`**:
-  - Spawns a background Tokio task for each backend.
-  - **Loop**:
-    1. Sleep for `interval`.
-    2. Attempt TCP connect (or HTTP request).
-    3. Update `Backend` status (`healthy` bit).
-    4. If status changed, notify `LoadBalancer` to update the active pool.
+This sequence diagram details the lifecycle of a single connection request, from TCP Accept to Connection Close.
 
-## 3. Rate Limiting (`traffic/limiter.rs`)
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Acceptor as Acceptor Task (Main)
+    participant HL as RateLimiter
+    participant LB as LoadBalancer
+    participant Proxy as Proxy Task
+    participant TLS as TLS Acceptor/Connector
+    participant BE as Backend Server
 
-Implements the **Token Bucket** algorithm to control request rate and bandwidth.
+    Client->>Acceptor: TCP Connect (SYN)
+    Acceptor->>Acceptor: Accept() -> TcpStream
+    
+    %% Rate Limiting Phase
+    Acceptor->>HL: check(Client IP)
+    alt Rate Limit Exceeded
+        HL-->>Acceptor: False
+        Acceptor-->>Client: Drop Connection
+    else Allowed
+        HL-->>Acceptor: True
+        
+        %% Load Balancing Phase
+        Acceptor->>LB: next_backend()
+        LB->>LB: Round Robin + Health Check
+        LB-->>Acceptor: Backend Address + Guard
+        
+        %% Proxy Spawning
+        Acceptor->>Proxy: Spawn Async Task
+        activate Proxy
+            
+            %% TLS Termination (Optional)
+            opt TLS Enabled
+                Proxy->>TLS: Accept Handshake
+                TLS-->>Proxy: Decrypted Stream
+            end
 
-### RateLimiter (Connections/Sec)
+            %% Connection to Backend
+            Proxy->>BE: TCP Connect
+            opt Backend TLS Enabled
+                Proxy->>TLS: Client Handshake
+                TLS-->>Proxy: Encrypted Backend Stream
+            end
 
-- **Sharding**: Uses `DashMap<IpAddr, TokenBucket>` to reduce lock contention across threads.
-- **TokenBucket**:
-  - `tokens`: `f64` (Current available tokens).
-  - `last_update`: `Instant` (Last refill time).
-- **`check(ip)`**:
-  - Calculates time elapsed since `last_update`.
-  - Adds `time_elapsed * rate` to `tokens` (up to `burst` limit).
-  - If `tokens >= 1.0`, consumes 1.0 and returns `true` (Allowed).
-  - Else, returns `false` (Rejected).
+            %% Data Transfer Phase (Bidirectional)
+            par Client to Backend
+                Client->>Proxy: Send Data
+                Proxy->>Proxy: Bandwidth Limit (Read)
+                Proxy->>BE: Forward Data
+            and Backend to Client
+                BE->>Proxy: Send Data
+                Proxy->>Proxy: Bandwidth Limit (Write)
+                Proxy->>Client: Forward Data
+            end
+            
+            Client->>Proxy: FIN
+            Proxy->>LB: Drop Guard (Decr Active Conns)
+            Proxy-->>Acceptor: Task Finished
+        deactivate Proxy
+    end
+```
 
-### BandwidthManager (Bytes/Sec)
+## 3. Core Module Deep Dive
 
-- Same Token Bucket logic, but tokens represent **Bytes**.
-- Shared generic `RateLimiter<Key, Bucket>`.
+### 3.1 Load Balancer (`core/balancer.rs`)
 
-## 4. Bandwidth Streams (`traffic/bandwidth.rs`)
+The `LoadBalancer` struct is the heart of the distribution logic.
 
-To limit bandwidth without blocking the thread, we implement a custom Async Stream wrapper.
+* **Concurrency Strategy**:
+  * It uses **`ArcSwap`** for the list of backends. This allows the internal pointer to be swapped atomically without locking readers (the Acceptor tasks). This is critical for high-throughput (wait-free reads).
+  * `AtomicUsize` is used for the round-robin index. `fetch_add` is a cheap CPU atomic instruction.
+  * `Backend` state (`healthy`, `active_connections`) is stored in `Arc<Atomic...>` independent of the list, allowing in-place updates without swapping the entire list.
 
-### Struct: `RateLimitedStream<S>`
+### 3.2 Rate Limiting (`traffic/limiter.rs`)
 
-Wraps an underlying stream `S` (e.g., `TcpStream`).
+* **Algorithm**: Token Bucket (GCRA - Generic Cell Rate Algorithm).
+* **Storage**: `DashMap<IpAddr, RateLimiter>`. `DashMap` provides shard-based locking, meaning locking an IP `1.2.3.4` does not block `5.6.7.8`.
+* **Fast Path**: If rate limiting is disabled in config, the `check` method returns `true` immediately (branch prediction friendly).
 
-### Logic
+### 3.3 Bandwidth Management (`traffic/bandwidth.rs`)
 
-- **`poll_read`**:
-    1. Check buffer size requested (`buf.remaining()`).
-    2. Ask `BandwidthManager` for tokens.
-    3. If tokens available -> Proceed to `inner.poll_read()`.
-    4. If not available -> Create a `Timer` future that sleeps until tokens refill, return `Poll::Pending`.
-- **`poll_write`**:
-    Similar logic. Before writing bytes to socket, we must "pay" tokens.
+This is implemented via a custom **Async Stream Wrapper**: `RateLimitedStream`.
 
-## 5. Connection Proxying (`networking/proxy.rs`)
+* **Mechanism**:
+  * Wraps `AsyncRead` and `AsyncWrite`.
+  * **Chunking**: IO is split into 16KB chunks to balance locking overhead and smoothness.
+  * **Precise Sleeping**: If tokens are insufficient, it calculates the exact duration needed to refill the required amount and sleeps asynchronously.
+  * **Burst Support**: A 64KB burst buffer allows accumulating tokens to handle system timer jitter (1ms resolution) without dropping average throughput.
+* **Flow**:
+  1. Check if a permit is already pending.
+  2. If not, calculate tokens needed for next chunk (min(remaining, 16KB)).
+  3. Call `limiter.check_n(tokens)`.
+  4. If `Err` (not enough): Calculate sleep time, create a future, and return `Poll::Pending`.
+  5. If `Ok`: Proceed to IO.
 
-The core data plane function `proxy_connection`.
+### 3.4 Networking & Copying (`networking/proxy.rs`)
 
-### Flow
+* **Zero-Copy(ish)**: We use `tokio::io::copy_bidirectional`. Under the hood, this uses splice (on Linux) or efficient user-space buffers.
+* **Nagle's Algorithm**: We explicitly disable Nagle (`set_nodelay(true)`) on both sides to minimize latency for small packets.
 
-1. **Connect**: Establish TCP connection to selected Backend.
-2. **Wrappers**:
-    - Wrap Client Stream in `RateLimitedStream`.
-    - Wrap Backend Stream in `RateLimitedStream`.
-3. **Split**:
-    - Split streams into Read/Write halves (`tokio::io::split`).
-4. **Copy**:
-    - Spawn two tasks (or use `try_join`):
-        - `copy(client_read, backend_write)`
-        - `copy(backend_read, client_write)`
-5. **Termination**:
-    - When one side closes (FIN), the copy finishes.
-    - Function returns, dropping all sockets and freeing resources.
+## 4. Clustering & Distributed State (`cluster/mod.rs`)
 
-## 6. TLS Integration (`networking/tls.rs`, `main.rs`)
+To support multiple Load Balancer instances syncing state (e.g., Rate Limits), we use the **SWIM Protocol** via the `foca` crate.
 
-### Termination
+* **Architecture**:
+  * Running on a separate UDP port (default 9090).
+  * **Gossip**: Periodically selects random peers to exchange "Usage Updates".
+  * **Failure Detection**: Indirect pinging to detect dead nodes.
+* **Consistency**: Eventual consistency. It does not replace Redis for strict counting but is sufficient for approximate global rate limiting.
 
-- **`TlsAcceptor`**: Wraps the listener.
-- Handshake happens *before* the Proxy Task starts.
-- Decrypted stream is passed to `proxy_connection`.
+## 5. Hot Reloading (`main.rs`)
 
-### Re-Encryption (Backend TLS)
+We use the `notify` crate to watch the configuration file.
 
-- Implemented inside `proxy.rs`.
-- If configured, we use `tokio_rustls::TlsConnector` to handshake with the backend *after* TCP connect but *before* limiting wrappers.
-
-## 7. Clustering (`cluster/mod.rs`)
-
-Implements distributed state using the `foca` crate (SWIM protocol).
-
-### Components
-
-- **`Cluster` Actor**:
-  - Owns the UDP socket and the `Foca` instance.
-  - Runs a loop handling:
-    - **Timer**: Triggers gossip rounds.
-    - **UDP Recv**: Passes data to `Foca`.
-    - **Command Channel**: Receives local updates to broadcast.
-- **`SimpleBroadcastHandler`**:
-  - Decodes incoming gossip messages (`UsageUpdate`).
-  - Forwards valid updates to the main application via a `mpsc` channel.
-
-### Message Flow
-
-1. **Local Update**: `RateLimiter` -> `ClusterCommand::BroadcastUsage` -> `Cluster`.
-2. **Encode**: `Cluster` wraps message in `BroadcastMessage` enum and encodes via `bincode`.
-3. **Gossip**: `Foca` piggybacks the message on UDP heartbeats to random peers.
-4. **Remote Receive**: Peer receives UDP -> `Foca` -> `BroadcastHandler` -> `rx_cluster_state`.
-5. **Apply**: Main loop receives update -> Updates Global `RateLimiter` state.
+* **Handling**:
+    1. File Modify Event detected.
+    2. Main thread reads new config to memory.
+    3. Iterates over existing Rules.
+    4. Calls `LoadBalancer::update_backends()`.
+    5. The `ArcSwap` is updated.
+    6. New connections immediately see new backends. Old connections continue on their existing backend until closed.
